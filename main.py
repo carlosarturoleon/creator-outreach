@@ -6,7 +6,7 @@ from pathlib import Path
 from src.config import settings
 from src.db.database import Database
 from src.graph import build_graph
-from src.logger import attach_db_handler, get_logger, setup_file_logging
+from src.logger import attach_db_handler, get_logger
 
 
 def main() -> None:
@@ -110,7 +110,6 @@ def main() -> None:
         "max_results_per_keyword": args.max_results,
         "stop_after_filter": args.stop_after_filter,
     })
-    setup_file_logging()
     attach_db_handler(run_id)
     log = get_logger(__name__)
 

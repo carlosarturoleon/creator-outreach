@@ -1,5 +1,7 @@
 import time
 
+from googleapiclient.errors import HttpError
+
 from src.logger import get_logger
 from src.state import GraphState
 from src.tools.youtube_client import YouTubeClient
@@ -38,7 +40,22 @@ def search_channels(state: GraphState) -> dict:
     new_channels: list[dict] = []
     loop_start = time.monotonic()
 
+    already_searched = db.get_searched_keywords()
+    keywords_set = set(keywords)
+    if already_searched and keywords_set.issubset(already_searched):
+        # All keywords were completed in a previous run — start fresh
+        log.info("  Previous run was complete — clearing search cache for a fresh run")
+        db.clear_searched_keywords()
+        already_searched = set()
+    elif already_searched:
+        pending = keywords_set - already_searched
+        log.info("  Resuming — %d/%d keywords already searched, %d pending",
+                 len(already_searched & keywords_set), total, len(pending))
+
     for i, keyword in enumerate(keywords, 1):
+        if keyword in already_searched:
+            log.info("  [%d/%d] Skipping (already searched): %r", i, total, keyword)
+            continue
         try:
             log.info("  [%d/%d] Searching: %r", i, total, keyword)
             results = client.search_channels(
@@ -63,6 +80,7 @@ def search_channels(state: GraphState) -> dict:
             log.info("  [%d/%d] %r → %d new channels saved to DB (total: %d)%s",
                      i, total, keyword, added, len(new_channels),
                      f" [{db_errors} DB errors]" if db_errors else "")
+            db.mark_keyword_searched(keyword, added)
 
             # Progress + ETA
             elapsed = time.monotonic() - loop_start
@@ -78,6 +96,13 @@ def search_channels(state: GraphState) -> dict:
             else:
                 log.info("  Search complete in %s", _fmt_seconds(elapsed))
 
+        except HttpError as e:
+            if e.resp.status == 403 and (
+                "quotaExceeded" in str(e) or "rateLimitExceeded" in str(e) or "quota" in str(e).lower()
+            ):
+                log.error("  YouTube quota exhausted — stopping search early (%d/%d keywords done)", i - 1, total)
+                break
+            log.error("  [%d/%d] Error for keyword %r: %s", i, total, keyword, e)
         except Exception as e:
             log.error("  [%d/%d] Error for keyword %r: %s", i, total, keyword, e)
 

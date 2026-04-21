@@ -79,6 +79,12 @@ class Database:
                     status TEXT
                 );
 
+                CREATE TABLE IF NOT EXISTS searched_keywords (
+                    keyword TEXT PRIMARY KEY,
+                    searched_at TEXT NOT NULL,
+                    channels_found INTEGER NOT NULL DEFAULT 0
+                );
+
                 CREATE TABLE IF NOT EXISTS run_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     run_id TEXT NOT NULL REFERENCES runs(run_id),
@@ -296,6 +302,29 @@ class Database:
                 "INSERT INTO run_logs (run_id, logged_at, level, logger, message) VALUES (?, ?, ?, ?, ?)",
                 (run_id, now, level, logger, message),
             )
+
+    def get_searched_keywords(self) -> set[str]:
+        """Return all keywords that have been successfully searched."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT keyword FROM searched_keywords").fetchall()
+        return {row["keyword"] for row in rows}
+
+    def clear_searched_keywords(self) -> None:
+        """Clear the search resume cache (called at the start of a fresh run)."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM searched_keywords")
+
+    def mark_keyword_searched(self, keyword: str, channels_found: int) -> None:
+        """Record that a keyword was successfully searched."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute("""
+                INSERT INTO searched_keywords (keyword, searched_at, channels_found)
+                VALUES (?, ?, ?)
+                ON CONFLICT(keyword) DO UPDATE SET
+                    searched_at = excluded.searched_at,
+                    channels_found = excluded.channels_found
+            """, (keyword, now, channels_found))
 
     def mark_channels_filtered(self, channel_ids: list[str]) -> None:
         """Set passed_filter_at timestamp for channels that passed all filters."""
