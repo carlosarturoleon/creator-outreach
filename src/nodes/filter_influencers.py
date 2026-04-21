@@ -1,5 +1,8 @@
+from src.logger import get_logger
 from src.state import GraphState
 from src.db.database import Database
+
+log = get_logger(__name__)
 
 WINDSOR_AI_NICHES = {
     "marketing", "analytics", "attribution", "digital marketing",
@@ -57,13 +60,14 @@ def filter_influencers(state: GraphState) -> dict:
 
         filtered.append(ch)
 
-    print(f"[filter_influencers] {len(filtered)} channels passed filters (from {len(state.get('enriched_channels', []))})")
+    total = len(state.get("enriched_channels", []))
+    log.info("filter_influencers — %d/%d channels passed all filters", len(filtered), total)
 
     if filtered:
         try:
             Database().mark_channels_filtered([ch["channel_id"] for ch in filtered])
         except Exception as e:
-            print(f"[filter_influencers] DB mark failed: {e}")
+            log.error("filter_influencers — DB mark failed: %s", e)
 
     return {
         "filtered_channels": filtered,

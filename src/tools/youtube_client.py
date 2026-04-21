@@ -5,7 +5,9 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from src.config import settings
+from src.logger import get_logger
 
+log = get_logger(__name__)
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
@@ -24,14 +26,16 @@ def _execute_with_backoff(request, max_retries: int = 5):
                     reason = e.error_details[0].get("reason", "")
                 if reason in ("quotaExceeded", "rateLimitExceeded") or "quota" in str(e).lower():
                     if attempt < max_retries - 1:
-                        print(f"[youtube] Quota exceeded, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries})")
+                        log.warning("YouTube quota exceeded, retrying in %.1fs (attempt %d/%d)",
+                                    delay, attempt + 1, max_retries)
                         time.sleep(delay)
                         delay = min(delay * 2, 60.0)
                         continue
                 raise  # Non-quota 403 (auth error) — don't retry
             if status in _RETRYABLE_STATUS_CODES:
                 if attempt < max_retries - 1:
-                    print(f"[youtube] HTTP {status}, retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries})")
+                    log.warning("YouTube HTTP %d, retrying in %.1fs (attempt %d/%d)",
+                                status, delay, attempt + 1, max_retries)
                     time.sleep(delay)
                     delay = min(delay * 2, 60.0)
                     continue

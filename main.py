@@ -1,9 +1,12 @@
 import argparse
 import sys
+import uuid
+from pathlib import Path
 
 from src.config import settings
 from src.db.database import Database
 from src.graph import build_graph
+from src.logger import attach_db_handler, get_logger, setup_file_logging
 
 
 def main() -> None:
@@ -23,14 +26,15 @@ def main() -> None:
     parser.add_argument(
         "--keywords",
         nargs="+",
-        default=[
-            "marketing analytics",
-            "marketing attribution",
-            "digital marketing tools",
-            "performance marketing",
-            "google analytics tutorial",
-        ],
+        default=None,
         help="Search keywords (each as a separate argument)",
+    )
+    parser.add_argument(
+        "--keywords-file",
+        type=Path,
+        default=Path("keywords.txt"),
+        dest="keywords_file",
+        help="Path to a text file with one keyword per line (# = comment)",
     )
     parser.add_argument(
         "--min-subscribers",
@@ -67,9 +71,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # --- Input validation ---
-    if not args.keywords:
-        print("Error: --keywords requires at least one value.")
+    # --- Resolve keywords (--keywords takes priority over --keywords-file) ---
+    if args.keywords:
+        keywords = args.keywords
+    elif args.keywords_file.exists():
+        lines = args.keywords_file.read_text().splitlines()
+        keywords = [l.strip() for l in lines if l.strip() and not l.strip().startswith("#")]
+        if not keywords:
+            print(f"Error: {args.keywords_file} contains no keywords.")
+            sys.exit(1)
+        print(f"Loaded {len(keywords)} keywords from {args.keywords_file}")
+    else:
+        print(f"Error: no --keywords given and {args.keywords_file} not found.")
         sys.exit(1)
     if args.min_subscribers < 0:
         print("Error: --min-subscribers must be >= 0.")
@@ -81,8 +94,30 @@ def main() -> None:
         print("Error: --max-results must be between 1 and 50 (YouTube API limit).")
         sys.exit(1)
 
-    print(f"\nWindsor.ai Influencer Finder")
-    print(f"Keywords:        {args.keywords}")
+    run_id = str(uuid.uuid4())
+    db = Database()
+    db.create_run(run_id, {
+        "keywords": keywords,
+        "min_subscribers": args.min_subscribers,
+        "min_engagement_rate": args.min_engagement,
+        "max_results_per_keyword": args.max_results,
+        "stop_after_filter": args.stop_after_filter,
+    })
+    setup_file_logging()
+    attach_db_handler(run_id)
+    log = get_logger(__name__)
+
+    log.info("Run ID: %s", run_id)
+    log.info("Keywords:        %s", keywords)
+    log.info("Min subscribers: %s", f"{args.min_subscribers:,}")
+    log.info("Min engagement:  %s%%", args.min_engagement)
+    log.info("Languages:       %s", args.languages)
+    log.info("Max results:     %s per keyword", args.max_results)
+    if args.stop_after_filter:
+        log.info("Mode: PREVIEW (stops after filter)")
+
+    print(f"\nWindsor.ai Influencer Finder  [run_id: {run_id}]")
+    print(f"Keywords:        {keywords}")
     print(f"Min subscribers: {args.min_subscribers:,}")
     print(f"Min engagement:  {args.min_engagement}%")
     print(f"Languages:       {args.languages}")
@@ -94,12 +129,13 @@ def main() -> None:
     graph = build_graph()
 
     initial_state = {
-        "search_keywords": args.keywords,
+        "search_keywords": keywords,
         "min_subscribers": args.min_subscribers,
         "min_engagement_rate": args.min_engagement,
         "target_languages": args.languages,
         "max_results_per_keyword": args.max_results,
         "stop_after_filter": args.stop_after_filter,
+        "run_id": run_id,
         # All Annotated[list] fields must be initialized to [] for operator.add
         "raw_channels": [],
         "deduped_channels": [],
@@ -113,7 +149,22 @@ def main() -> None:
         "current_phase": "initializing",
     }
 
-    graph.invoke(initial_state)
+    try:
+        final_state = graph.invoke(initial_state)
+        db.finish_run(run_id, {
+            "total_found": len(final_state.get("raw_channels", [])),
+            "total_deduped": len(final_state.get("deduped_channels", [])),
+            "total_pre_filtered": len(final_state.get("pre_filtered_channels", [])),
+            "total_enriched": len(final_state.get("enriched_channels", [])),
+            "total_filtered": len(final_state.get("filtered_channels", [])),
+            "total_scored": len(final_state.get("scored_influencers", [])),
+            "total_emailed": len(final_state.get("outreach_emails", [])),
+            "error_count": len(final_state.get("error_log", [])),
+        })
+    except Exception as e:
+        log.error("Pipeline failed: %s", e)
+        db.finish_run(run_id, {"error_count": 1}, status="failed")
+        raise
 
 
 if __name__ == "__main__":

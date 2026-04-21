@@ -1,52 +1,14 @@
 import math
-import time
 
+from src.logger import get_logger
 from src.state import GraphState
 from src.db.database import Database
-from src.tools.llm_client import get_llm
-from src.models.scored_influencer import ScoringResult
+from src.scoring.keyword_scorer import score_channel_relevance
 
-_LLM_MAX_RETRIES = 4
-_LLM_INITIAL_DELAY = 2.0
+log = get_logger(__name__)
 
-
-def _invoke_with_backoff(structured_llm, prompt: str):
-    """Invoke LLM with exponential backoff on rate limit (429) errors."""
-    delay = _LLM_INITIAL_DELAY
-    last_exc = None
-    for attempt in range(_LLM_MAX_RETRIES):
-        try:
-            return structured_llm.invoke(prompt)
-        except Exception as e:
-            last_exc = e
-            err_str = str(e).lower()
-            if "429" in err_str or "rate limit" in err_str or "overloaded" in err_str:
-                if attempt < _LLM_MAX_RETRIES - 1:
-                    print(f"[score_influencers] Rate limited, retrying in {delay:.1f}s (attempt {attempt + 1}/{_LLM_MAX_RETRIES})")
-                    time.sleep(delay)
-                    delay = min(delay * 2, 60.0)
-                    continue
-            raise
-    raise last_exc
-
-WINDSOR_RELEVANCE_PROMPT = """You are evaluating YouTube channels for the Windsor.ai affiliate program.
-
-Windsor.ai is a no-code marketing data integration and attribution platform. It connects ad data from 300+ sources (Google Ads, Meta, TikTok, LinkedIn, Shopify, etc.) to BI tools (Google Sheets, Looker Studio, BigQuery, Tableau). Their audience is digital marketers, marketing analysts, CMOs, performance marketers, and data-driven teams.
-
-The affiliate program pays 30% recurring commissions indefinitely.
-
-Channel to evaluate:
-- Title: {title}
-- Description: {description}
-- Channel keywords: {keywords}
-- Recent video titles: {video_titles}
-- Subscribers: {subscribers:,}
-- Engagement rate: {engagement_rate:.2f}%
-
-Score the relevance of this channel for Windsor.ai affiliate promotion (0-30 points).
-Consider: Does their audience care about marketing analytics, attribution, ad data, SaaS tools, or performance marketing? Would Windsor.ai solve a real problem for their viewers?
-
-Respond with a JSON object matching the ScoringResult schema."""
+_SCORE_CACHE_DAYS = 30           # reuse cached score if scored within this many days
+_METRICS_CHANGE_THRESHOLD = 0.10  # re-score if engagement or audience tier changed >10%
 
 
 def _engagement_score(rate: float) -> float:
@@ -72,45 +34,79 @@ def _audience_size_score(subscribers: int) -> float:
         return 30.0
 
 
+def _metrics_changed_significantly(ch: dict, cached: dict) -> bool:
+    """Return True if engagement or audience tier score shifted by more than the threshold."""
+    def pct_delta(new: float, old: float) -> float:
+        return abs(new - old) / old if old else 0.0
+
+    eng_score_new = _engagement_score(ch.get("engagement_rate", 0.0))
+    eng_score_old = cached.get("engagement_score", 0.0)
+    size_score_new = _audience_size_score(ch.get("subscriber_count", 0))
+    size_score_old = cached.get("audience_size_score", 0.0)
+
+    return (
+        pct_delta(eng_score_new, eng_score_old) > _METRICS_CHANGE_THRESHOLD
+        or pct_delta(size_score_new, size_score_old) > _METRICS_CHANGE_THRESHOLD
+    )
+
+
 def score_influencers(state: GraphState) -> dict:
     """
     Node 4: Score each filtered channel.
-    - Deterministic: engagement score + audience size score
-    - LLM: Windsor.ai relevance score (0-30) via Claude structured output
-    Persists results to SQLite. Returns sorted by composite_score descending.
-    """
-    llm = get_llm(temperature=0.2)
-    structured_llm = llm.with_structured_output(ScoringResult, method="json_schema")
 
+    Scoring breakdown (max 100 pts):
+      - Engagement score   0-40  (log-scale of engagement rate)
+      - Audience size      0-30  (tiered by subscriber count)
+      - Keyword relevance  0-30  (deterministic keyword scoring against
+                                  description, title, channel keywords,
+                                  and recent video titles)
+
+    Keyword relevance replaces the LLM — no API calls, fully deterministic,
+    instant, and reproducible. Channels matching negative keywords
+    (crypto, gaming, lifestyle, etc.) receive relevance_score = 0.
+
+    Cached scores (within _SCORE_CACHE_DAYS) are reused unless metrics
+    changed significantly, saving repeated computation.
+
+    Results are persisted to SQLite and returned sorted by composite_score desc.
+    """
     db = Database()
     errors: list[str] = []
+    channels = state.get("filtered_channels", [])
+    log.info("score_influencers START — scoring %d channels", len(channels))
+
+    # Cache lookup
+    all_ids = [ch.get("channel_id", "") for ch in channels]
+    cached_scores = db.get_cached_scores(all_ids, max_age_days=_SCORE_CACHE_DAYS)
+
     scored: list[dict] = []
-    for ch in state.get("filtered_channels", []):
+    cache_hits = 0
+    fresh_scored = 0
+
+    for i, ch in enumerate(channels, 1):
         cid = ch.get("channel_id", "unknown")
         engagement_pts = _engagement_score(ch.get("engagement_rate", 0.0))
         size_pts = _audience_size_score(ch.get("subscriber_count", 0))
 
-        prompt = WINDSOR_RELEVANCE_PROMPT.format(
-            title=ch.get("channel_title", ""),
-            description=(ch.get("description", "") or "")[:500],
-            keywords=", ".join(ch.get("keywords", [])[:10]),
-            video_titles=", ".join(ch.get("recent_video_titles", [])[:5]),
-            subscribers=ch.get("subscriber_count", 0),
-            engagement_rate=ch.get("engagement_rate", 0.0),
-        )
+        cached = cached_scores.get(cid)
+        use_cache = cached is not None and not _metrics_changed_significantly(ch, cached)
 
-        try:
-            result: ScoringResult = _invoke_with_backoff(structured_llm, prompt)
-            relevance_pts = result.relevance_score
-            rationale = result.relevance_rationale
-            niche_tags = result.niche_tags
-        except Exception as e:
-            err_msg = f"[score_influencers] LLM scoring failed for {cid}: {e}"
-            print(err_msg)
-            errors.append(err_msg)
-            relevance_pts = 0.0
-            rationale = "Scoring unavailable"
-            niche_tags = []
+        if use_cache:
+            relevance_pts = cached["relevance_score"]
+            rationale = cached.get("relevance_rationale", "")
+            niche_tags = cached.get("niche_tags", [])
+            cache_hits += 1
+            log.info("  [%d/%d] Cache hit: %s (relevance=%.1f)",
+                     i, len(channels), ch.get("channel_title", cid), relevance_pts)
+        else:
+            kw_result = score_channel_relevance(ch)
+            relevance_pts = kw_result["relevance_score"]
+            rationale = kw_result["relevance_rationale"]
+            niche_tags = kw_result["niche_tags"]
+            fresh_scored += 1
+            log.info("  [%d/%d] Scored: %s — kw_raw=%d, relevance=%.1f",
+                     i, len(channels), ch.get("channel_title", cid),
+                     kw_result.get("keyword_score_raw", 0), relevance_pts)
 
         composite = round(engagement_pts + size_pts + relevance_pts, 2)
 
@@ -130,15 +126,18 @@ def score_influencers(state: GraphState) -> dict:
         }
         scored.append(scored_ch)
 
+        log.info("    score=%.1f (eng=%.1f + size=%.1f + relevance=%.1f)",
+                 composite, engagement_pts, size_pts, relevance_pts)
         try:
             db.upsert_scored_influencer(scored_ch)
         except Exception as e:
             err_msg = f"[score_influencers] DB upsert failed for {cid}: {e}"
-            print(err_msg)
+            log.error("  DB upsert failed for %s: %s", cid, e)
             errors.append(err_msg)
 
     scored.sort(key=lambda x: x["composite_score"], reverse=True)
-    print(f"[score_influencers] Scored {len(scored)} channels ({len(errors)} errors)")
+    log.info("score_influencers DONE — %d scored (%d keyword-scored, %d cache hits), %d errors",
+             len(scored), fresh_scored, cache_hits, len(errors))
     return {
         "scored_influencers": scored,
         "error_log": errors,

@@ -1,6 +1,9 @@
 from langgraph.graph import StateGraph, START, END
 
+from src.logger import get_logger
 from src.state import GraphState
+
+log = get_logger(__name__)
 from src.nodes.search_channels import search_channels
 from src.nodes.deduplicate_vs_db import deduplicate_vs_db
 from src.nodes.pre_filter_by_description import pre_filter_by_description
@@ -14,7 +17,7 @@ from src.nodes.save_results import save_results
 def _route_after_dedup(state: GraphState) -> str:
     """Skip to END if all channels were already emailed."""
     if not state.get("deduped_channels"):
-        print("[graph] All found channels already emailed. Nothing new to process.")
+        log.info("All found channels already emailed — nothing new to process")
         return "__end__"
     return "pre_filter_by_description"
 
@@ -23,7 +26,7 @@ def _route_after_filter(state: GraphState) -> str:
     """Skip to END if no channels passed the filters, or if preview mode is on."""
     filtered = state.get("filtered_channels", [])
     if not filtered:
-        print("[graph] No channels passed the filters. Try adjusting thresholds.")
+        log.warning("No channels passed the filters — try adjusting thresholds")
         return "__end__"
     if state.get("stop_after_filter", False):
         _print_filter_preview(filtered)

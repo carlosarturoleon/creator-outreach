@@ -1,5 +1,8 @@
+from src.logger import get_logger
 from src.state import GraphState
 from src.db.database import Database
+
+log = get_logger(__name__)
 
 
 def deduplicate_vs_db(state: GraphState) -> dict:
@@ -22,9 +25,8 @@ def deduplicate_vs_db(state: GraphState) -> dict:
         else:
             kept.append(ch)
 
-    if skipped:
-        print(f"[deduplicate_vs_db] Skipping {len(skipped)} already-emailed channels")
-    print(f"[deduplicate_vs_db] {len(kept)} channels proceed to enrichment")
+    log.info("deduplicate_vs_db — %d raw, %d skipped (already emailed), %d proceed",
+             len(raw), len(skipped), len(kept))
 
     return {
         "deduped_channels": kept,

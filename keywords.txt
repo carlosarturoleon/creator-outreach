@@ -1,0 +1,162 @@
+# YouTube Search Phrases for Windsor.ai Influencer Finder
+# One keyword per line. Lines starting with # are ignored.
+# Strategy: specific problem-solving queries > generic terms
+# Target: 1K-10K subscriber channels solving real practitioner problems
+
+# ─── TIER 1: GA4 Setup & Implementation ───────────────────────────────────────
+GA4 setup for small business
+install google analytics 4 shopify
+GA4 ecommerce tracking tutorial
+migrate universal analytics to GA4
+GA4 for beginners 2024
+google analytics 4 conversion tracking
+GA4 custom events setup
+fix GA4 not tracking
+
+# ─── TIER 1: Facebook/Meta Pixel & Conversion API ────────────────────────────
+facebook pixel setup shopify
+meta pixel not tracking conversions
+facebook conversion api tutorial
+meta ads tracking setup
+shopify facebook pixel 2024
+fix facebook pixel issues
+meta capi setup guide
+facebook ads attribution tracking
+
+# ─── TIER 1: Google Ads Conversion Tracking ──────────────────────────────────
+google ads conversion tracking setup
+google ads phone call tracking
+enhanced conversions google ads
+google tag manager conversion tracking
+offline conversion import google ads
+google ads attribution models
+
+# ─── TIER 1: Looker Studio / Data Studio ─────────────────────────────────────
+looker studio dashboard tutorial
+google data studio marketing report
+create looker studio template
+looker studio ga4 tutorial
+marketing dashboard looker studio
+looker studio for beginners
+
+# ─── TIER 1: Google Tag Manager ──────────────────────────────────────────────
+google tag manager tutorial for beginners
+GTM setup for shopify
+track conversions with GTM
+facebook pixel through GTM
+GA4 setup with tag manager
+server side tagging GTM
+
+# ─── TIER 2: Shopify Analytics & Tracking ────────────────────────────────────
+shopify analytics setup
+shopify conversion tracking
+best shopify analytics apps
+shopify google analytics setup
+track shopify sales
+shopify reporting dashboard
+shopify utm tracking
+shopify customer journey tracking
+
+# ─── TIER 2: Shopify + Paid Ads Integration ──────────────────────────────────
+shopify facebook ads setup
+connect shopify to google ads
+shopify tiktok pixel
+shopify ads manager setup
+shopify meta catalog setup
+
+# ─── TIER 3: Google Ads Tutorials ────────────────────────────────────────────
+google ads tutorial for beginners 2024
+google shopping ads setup
+pmax campaigns tutorial
+google ads for local business
+google ads for ecommerce
+low budget google ads strategy
+
+# ─── TIER 3: Facebook/Meta Ads ───────────────────────────────────────────────
+facebook ads tutorial 2024
+meta ads for small business
+facebook ads for shopify stores
+facebook ads targeting strategy
+low cost facebook ads
+facebook ads testing strategy
+
+# ─── TIER 3: TikTok Ads ──────────────────────────────────────────────────────
+tiktok ads tutorial for beginners
+tiktok pixel setup
+tiktok ads for ecommerce
+tiktok ads manager tutorial
+
+# ─── TIER 4: Marketing Attribution & Multi-Channel ───────────────────────────
+marketing attribution models explained
+multi-touch attribution tutorial
+track marketing roi
+attribution reporting tutorial
+cross-channel attribution
+first click vs last click attribution
+track marketing across platforms
+combine google ads and facebook data
+marketing mix modeling tutorial
+unified marketing dashboard
+connect all ad platforms
+
+# ─── TIER 5: Spanish ─────────────────────────────────────────────────────────
+configurar google analytics 4
+pixel de facebook shopify
+tutorial google ads español
+analitica digital shopify
+configurar conversiones google ads
+meta ads tutorial español
+
+# ─── TIER 5: Portuguese (Brazilian) ──────────────────────────────────────────
+pixel facebook shopify
+tutorial google ads português
+rastreamento conversões
+gestor de tráfego tutorial
+como configurar meta pixel
+
+# ─── COMBO: Multi-Tool Integration ───────────────────────────────────────────
+shopify google analytics facebook pixel
+GTM GA4 facebook conversion api
+looker studio google ads facebook ads
+track roi google ads shopify
+multi-channel attribution dashboard
+connect GA4 to looker studio
+
+# ─── VOLUME PLAYS: Broad but high-traffic ─────────────────────────────────────
+# Filter results by channels where comments mention running ads or tracking
+marketing analytics tutorial
+digital marketing analytics
+ecommerce marketing analytics
+shopify marketing analytics
+paid ads analytics tutorial
+marketing data dashboard
+
+# ─── COMPETITOR ANGLE: Underexploited, first-mover opportunities ──────────────
+# Almost no YouTube videos exist for these — high-value niche
+supermetrics alternative
+supermetrics tutorial
+replace supermetrics
+triplewhale alternative
+northbeam alternative
+rockerbox alternative
+hyros alternative
+wicked reports alternative
+marketing attribution tool comparison
+best marketing attribution software
+windsor ai tutorial
+windsor.ai review
+
+# ─── TUTORIAL FORMAT: Integration & platform bridge tutorials ─────────────────
+# Find creators already making integration tutorials — pitch the Windsor.ai angle
+google ads to looker studio tutorial
+facebook ads to google sheets
+connect facebook ads to bigquery
+export google ads data to sheets
+marketing data to google sheets
+automate marketing reports tutorial
+google ads api tutorial
+facebook ads api tutorial
+shopify data to looker studio
+woocommerce google analytics setup
+klaviyo google analytics integration
+hubspot google analytics integration

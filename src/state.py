@@ -25,5 +25,6 @@ class GraphState(TypedDict):
     skipped_channel_ids: Annotated[list[str], operator.add]
     current_phase: str
     stop_after_filter: bool
+    run_id: str
     # Plain overwrite: set by pre_filter_by_description, read by enrich_channel_data
     pre_filtered_channels: list[dict]

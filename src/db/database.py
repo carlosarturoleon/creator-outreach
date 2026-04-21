@@ -58,7 +58,88 @@ class Database:
                     generated_at TEXT,
                     sent_at TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS runs (
+                    run_id TEXT PRIMARY KEY,
+                    started_at TEXT NOT NULL,
+                    finished_at TEXT,
+                    keywords TEXT,
+                    min_subscribers INTEGER,
+                    min_engagement_rate REAL,
+                    max_results_per_keyword INTEGER,
+                    stop_after_filter INTEGER,
+                    total_found INTEGER,
+                    total_deduped INTEGER,
+                    total_pre_filtered INTEGER,
+                    total_enriched INTEGER,
+                    total_filtered INTEGER,
+                    total_scored INTEGER,
+                    total_emailed INTEGER,
+                    error_count INTEGER,
+                    status TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS run_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL REFERENCES runs(run_id),
+                    logged_at TEXT NOT NULL,
+                    level TEXT NOT NULL,
+                    logger TEXT NOT NULL,
+                    message TEXT NOT NULL
+                );
             """)
+
+    def get_cached_channels(self, channel_ids: list[str], max_age_days: int = 7) -> dict[str, dict]:
+        """Return enriched channel rows from DB that were updated within max_age_days.
+        Key is channel_id. Only channels with a non-NULL last_updated_at are returned.
+        """
+        if not channel_ids:
+            return {}
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        placeholders = ",".join("?" * len(channel_ids))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM channels WHERE channel_id IN ({placeholders})"
+                f" AND last_updated_at >= ?",
+                (*channel_ids, cutoff),
+            ).fetchall()
+        result = {}
+        for row in rows:
+            d = dict(row)
+            # Deserialize JSON columns back to lists
+            for col in ("keywords", "recent_video_titles"):
+                try:
+                    d[col] = json.loads(d[col]) if d[col] else []
+                except (ValueError, TypeError):
+                    d[col] = []
+            result[d["channel_id"]] = d
+        return result
+
+    def get_cached_scores(self, channel_ids: list[str], max_age_days: int = 30) -> dict[str, dict]:
+        """Return scored_influencer rows from DB scored within max_age_days.
+        Key is channel_id.
+        """
+        if not channel_ids:
+            return {}
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        placeholders = ",".join("?" * len(channel_ids))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM scored_influencers WHERE channel_id IN ({placeholders})"
+                f" AND scored_at >= ?",
+                (*channel_ids, cutoff),
+            ).fetchall()
+        result = {}
+        for row in rows:
+            d = dict(row)
+            try:
+                d["niche_tags"] = json.loads(d["niche_tags"]) if d["niche_tags"] else []
+            except (ValueError, TypeError):
+                d["niche_tags"] = []
+            result[d["channel_id"]] = d
+        return result
 
     def get_emailed_channel_ids(self) -> set[str]:
         """Return channel_ids where the outreach email has been marked as sent.
@@ -155,6 +236,66 @@ class Database:
                 json.dumps(data.get("niche_tags", [])),
                 now,
             ))
+
+    def create_run(self, run_id: str, config: dict) -> None:
+        """Insert a new run record at pipeline start."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute("""
+                INSERT INTO runs (
+                    run_id, started_at, keywords, min_subscribers,
+                    min_engagement_rate, max_results_per_keyword,
+                    stop_after_filter, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'running')
+            """, (
+                run_id,
+                now,
+                json.dumps(config.get("keywords", [])),
+                config.get("min_subscribers", 0),
+                config.get("min_engagement_rate", 0.0),
+                config.get("max_results_per_keyword", 0),
+                int(config.get("stop_after_filter", False)),
+            ))
+
+    def finish_run(self, run_id: str, stats: dict, status: str = "completed") -> None:
+        """Update the run record with final stats and status."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute("""
+                UPDATE runs SET
+                    finished_at = ?,
+                    total_found = ?,
+                    total_deduped = ?,
+                    total_pre_filtered = ?,
+                    total_enriched = ?,
+                    total_filtered = ?,
+                    total_scored = ?,
+                    total_emailed = ?,
+                    error_count = ?,
+                    status = ?
+                WHERE run_id = ?
+            """, (
+                now,
+                stats.get("total_found", 0),
+                stats.get("total_deduped", 0),
+                stats.get("total_pre_filtered", 0),
+                stats.get("total_enriched", 0),
+                stats.get("total_filtered", 0),
+                stats.get("total_scored", 0),
+                stats.get("total_emailed", 0),
+                stats.get("error_count", 0),
+                status,
+                run_id,
+            ))
+
+    def add_log_entry(self, run_id: str, level: str, logger: str, message: str) -> None:
+        """Insert a single log line into run_logs."""
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO run_logs (run_id, logged_at, level, logger, message) VALUES (?, ?, ?, ?, ?)",
+                (run_id, now, level, logger, message),
+            )
 
     def mark_channels_filtered(self, channel_ids: list[str]) -> None:
         """Set passed_filter_at timestamp for channels that passed all filters."""

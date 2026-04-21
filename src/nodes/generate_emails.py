@@ -1,9 +1,12 @@
 import time
 
+from src.logger import get_logger
 from src.state import GraphState
 from src.db.database import Database
 from src.tools.llm_client import get_llm
 from src.models.outreach_email import EmailResult
+
+log = get_logger(__name__)
 
 _LLM_MAX_RETRIES = 4
 _LLM_INITIAL_DELAY = 2.0
@@ -21,7 +24,8 @@ def _invoke_with_backoff(structured_llm, prompt: str):
             err_str = str(e).lower()
             if "429" in err_str or "rate limit" in err_str or "overloaded" in err_str:
                 if attempt < _LLM_MAX_RETRIES - 1:
-                    print(f"[generate_emails] Rate limited, retrying in {delay:.1f}s (attempt {attempt + 1}/{_LLM_MAX_RETRIES})")
+                    log.warning("generate_emails — rate limited, retrying in %.1fs (attempt %d/%d)",
+                                delay, attempt + 1, _LLM_MAX_RETRIES)
                     time.sleep(delay)
                     delay = min(delay * 2, 60.0)
                     continue
@@ -70,8 +74,10 @@ def generate_emails(state: GraphState) -> dict:
         ch["channel_id"]: ch for ch in state.get("enriched_channels", [])
     }
 
+    influencers = state.get("scored_influencers", [])
+    log.info("generate_emails START — generating emails for %d influencers", len(influencers))
     emails: list[dict] = []
-    for influencer in state.get("scored_influencers", []):
+    for i, influencer in enumerate(influencers, 1):
         cid = influencer["channel_id"]
         ch = enriched_map.get(cid, {})
 
@@ -84,6 +90,7 @@ def generate_emails(state: GraphState) -> dict:
             rationale=influencer.get("relevance_rationale", ""),
         )
 
+        log.info("  [%d/%d] Generating email for: %s", i, len(influencers), influencer["channel_title"])
         try:
             result: EmailResult = _invoke_with_backoff(structured_llm, prompt)
             subject = result.subject_line
@@ -91,7 +98,7 @@ def generate_emails(state: GraphState) -> dict:
             hooks = result.personalization_hooks
         except Exception as e:
             err_msg = f"[generate_emails] LLM failed for {cid}: {e}"
-            print(err_msg)
+            log.error("  LLM failed for %s: %s", cid, e)
             errors.append(err_msg)
             subject = "Windsor.ai Affiliate Opportunity"
             body = "[Email generation failed — please retry]"
@@ -110,10 +117,10 @@ def generate_emails(state: GraphState) -> dict:
             db.upsert_email(email_data)
         except Exception as e:
             err_msg = f"[generate_emails] DB upsert failed for {cid}: {e}"
-            print(err_msg)
+            log.error("  DB upsert failed for %s: %s", cid, e)
             errors.append(err_msg)
 
-    print(f"[generate_emails] Generated {len(emails)} outreach emails ({len(errors)} errors)")
+    log.info("generate_emails DONE — %d emails generated, %d errors", len(emails), len(errors))
     return {
         "outreach_emails": emails,
         "error_log": errors,
