@@ -7,6 +7,7 @@ class GraphState(TypedDict):
     # --- Inputs ---
     search_keywords: list[str]
     min_subscribers: int
+    max_subscribers: int
     min_engagement_rate: float
     target_languages: list[str]
     max_results_per_keyword: int

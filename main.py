@@ -44,6 +44,13 @@ def main() -> None:
         help="Minimum subscriber count",
     )
     parser.add_argument(
+        "--max-subscribers",
+        type=int,
+        default=10000,
+        dest="max_subscribers",
+        help="Maximum subscriber count (0 = no cap)",
+    )
+    parser.add_argument(
         "--min-engagement",
         type=float,
         default=1.0,
@@ -110,6 +117,7 @@ def main() -> None:
     log.info("Run ID: %s", run_id)
     log.info("Keywords:        %s", keywords)
     log.info("Min subscribers: %s", f"{args.min_subscribers:,}")
+    log.info("Max subscribers: %s", f"{args.max_subscribers:,}" if args.max_subscribers else "no cap")
     log.info("Min engagement:  %s%%", args.min_engagement)
     log.info("Languages:       %s", args.languages)
     log.info("Max results:     %s per keyword", args.max_results)
@@ -119,6 +127,7 @@ def main() -> None:
     print(f"\nWindsor.ai Influencer Finder  [run_id: {run_id}]")
     print(f"Keywords:        {keywords}")
     print(f"Min subscribers: {args.min_subscribers:,}")
+    print(f"Max subscribers: {args.max_subscribers:,}" if args.max_subscribers else "Max subscribers: no cap")
     print(f"Min engagement:  {args.min_engagement}%")
     print(f"Languages:       {args.languages}")
     print(f"Max results:     {args.max_results} per keyword")
@@ -131,6 +140,7 @@ def main() -> None:
     initial_state = {
         "search_keywords": keywords,
         "min_subscribers": args.min_subscribers,
+        "max_subscribers": args.max_subscribers,
         "min_engagement_rate": args.min_engagement,
         "target_languages": args.languages,
         "max_results_per_keyword": args.max_results,

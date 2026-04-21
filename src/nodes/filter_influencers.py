@@ -30,11 +30,15 @@ def filter_influencers(state: GraphState) -> dict:
     filtered: list[dict] = []
     target_langs = [lang.lower()[:2] for lang in state.get("target_languages", [])]
     min_subs = state.get("min_subscribers", 0)
+    max_subs = state.get("max_subscribers", 0)  # 0 means no cap
     min_eng = state.get("min_engagement_rate", 0.0)
 
     for ch in state.get("enriched_channels", []):
-        # Hard filter 1: subscribers
-        if ch.get("subscriber_count", 0) < min_subs:
+        # Hard filter 1: subscribers (min and optional max cap)
+        subs = ch.get("subscriber_count", 0)
+        if subs < min_subs:
+            continue
+        if max_subs and subs > max_subs:
             continue
 
         # Hard filter 2: engagement rate

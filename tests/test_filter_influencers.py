@@ -4,10 +4,11 @@ from unittest.mock import MagicMock, patch
 from src.nodes.filter_influencers import filter_influencers
 
 
-def _state(channels, min_subscribers=5_000, min_engagement=1.0, languages=None):
+def _state(channels, min_subscribers=5_000, max_subscribers=0, min_engagement=1.0, languages=None):
     return {
         "enriched_channels": channels,
         "min_subscribers": min_subscribers,
+        "max_subscribers": max_subscribers,
         "min_engagement_rate": min_engagement,
         "target_languages": languages or ["en"],
     }
@@ -54,6 +55,27 @@ def test_drops_below_min_subscribers(MockDB):
 def test_keeps_exactly_at_min_subscribers(MockDB):
     MockDB.return_value.mark_channels_filtered = MagicMock()
     result = filter_influencers(_state([_ch(subscriber_count=5_000)]))
+    assert len(result["filtered_channels"]) == 1
+
+
+@patch("src.nodes.filter_influencers.Database")
+def test_drops_above_max_subscribers(MockDB):
+    MockDB.return_value.mark_channels_filtered = MagicMock()
+    result = filter_influencers(_state([_ch(subscriber_count=10_001)], max_subscribers=10_000))
+    assert len(result["filtered_channels"]) == 0
+
+
+@patch("src.nodes.filter_influencers.Database")
+def test_keeps_exactly_at_max_subscribers(MockDB):
+    MockDB.return_value.mark_channels_filtered = MagicMock()
+    result = filter_influencers(_state([_ch(subscriber_count=10_000)], max_subscribers=10_000))
+    assert len(result["filtered_channels"]) == 1
+
+
+@patch("src.nodes.filter_influencers.Database")
+def test_no_cap_when_max_subscribers_zero(MockDB):
+    MockDB.return_value.mark_channels_filtered = MagicMock()
+    result = filter_influencers(_state([_ch(subscriber_count=1_000_000)], max_subscribers=0))
     assert len(result["filtered_channels"]) == 1
 
 
