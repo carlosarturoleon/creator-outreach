@@ -72,10 +72,12 @@ def main():
                 ROUND(s.relevance_score, 2)        AS relevance_score,
                 ROUND(s.tutorial_score, 2)         AS tutorial_score,
                 ROUND(s.upload_recency_score, 2)   AS upload_recency_score,
+                s.selected,
                 s.relevance_rationale,
                 s.niche_tags
             FROM channels c
             JOIN scored_influencers s ON c.channel_id = s.channel_id
+            WHERE c.subscriber_count >= 1000
             ORDER BY s.composite_score DESC
         """
         fieldnames = [
@@ -87,7 +89,7 @@ def main():
             "contact_email", "passed_filter", "first_seen_at",
             "composite_score", "engagement_score", "audience_size_score",
             "relevance_score", "tutorial_score", "upload_recency_score",
-            "relevance_rationale", "niche_tags",
+            "selected", "relevance_rationale", "niche_tags",
         ]
     else:
         query = """

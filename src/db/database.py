@@ -50,7 +50,9 @@ class Database:
                     upload_recency_score REAL DEFAULT 0,
                     relevance_rationale TEXT,
                     niche_tags TEXT,
-                    scored_at TEXT
+                    scored_at TEXT,
+                    selected INTEGER DEFAULT 0,
+                    selected_at TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS outreach_emails (
@@ -100,12 +102,44 @@ class Database:
             """)
 
     def migrate_scoring_v2(self) -> None:
-        """Add tutorial_score and upload_recency_score columns to scored_influencers if missing."""
+        """Add tutorial_score, upload_recency_score, selected, selected_at columns if missing."""
         with self._connect() as conn:
             cols = [row[1] for row in conn.execute("PRAGMA table_info(scored_influencers)").fetchall()]
-            for col in ("tutorial_score", "upload_recency_score"):
+            for col, definition in [
+                ("tutorial_score", "REAL DEFAULT 0"),
+                ("upload_recency_score", "REAL DEFAULT 0"),
+                ("selected", "INTEGER DEFAULT 0"),
+                ("selected_at", "TEXT"),
+            ]:
                 if col not in cols:
-                    conn.execute(f"ALTER TABLE scored_influencers ADD COLUMN {col} REAL DEFAULT 0")
+                    conn.execute(f"ALTER TABLE scored_influencers ADD COLUMN {col} {definition}")
+
+    def select_influencers(self, channel_ids: list[str]) -> int:
+        """Mark the given channel_ids as selected. Returns count updated."""
+        if not channel_ids:
+            return 0
+        now = datetime.now().isoformat()
+        placeholders = ",".join("?" * len(channel_ids))
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"UPDATE scored_influencers SET selected = 1, selected_at = ? "
+                f"WHERE channel_id IN ({placeholders})",
+                [now, *channel_ids],
+            )
+            return cur.rowcount
+
+    def deselect_influencers(self, channel_ids: list[str]) -> int:
+        """Unmark the given channel_ids as selected. Returns count updated."""
+        if not channel_ids:
+            return 0
+        placeholders = ",".join("?" * len(channel_ids))
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"UPDATE scored_influencers SET selected = 0, selected_at = NULL "
+                f"WHERE channel_id IN ({placeholders})",
+                channel_ids,
+            )
+            return cur.rowcount
 
     def migrate_add_contact_email(self) -> None:
         """Add contact_email column to existing tables if not present (safe to run repeatedly)."""

@@ -38,7 +38,7 @@ def load_filtered_channels() -> list[dict]:
             keywords, recent_video_titles, country, default_language
         FROM channels
         WHERE engagement_rate IS NOT NULL
-          AND subscriber_count > 0
+          AND subscriber_count >= 1000
         ORDER BY subscriber_count DESC
     """).fetchall()
     con.close()

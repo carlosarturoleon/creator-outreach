@@ -9,6 +9,7 @@ log = get_logger(__name__)
 
 _SCORE_CACHE_DAYS = 30           # reuse cached score if scored within this many days
 _METRICS_CHANGE_THRESHOLD = 0.10  # re-score if engagement or audience tier changed >10%
+_MIN_SUBSCRIBERS = 1_000         # hard floor — channels below this score 0 (no real audience)
 
 # Tutorial/teaching intent signals — matched against recent_video_titles only
 _TUTORIAL_SIGNALS: list[str] = [
@@ -116,8 +117,15 @@ def score_influencers(state: GraphState) -> dict:
 
     for i, ch in enumerate(channels, 1):
         cid = ch.get("channel_id", "unknown")
+        subs = ch.get("subscriber_count", 0)
+
+        if subs < _MIN_SUBSCRIBERS:
+            log.info("  [%d/%d] Skip (<%d subs): %s",
+                     i, len(channels), _MIN_SUBSCRIBERS, ch.get("channel_title", cid))
+            continue
+
         engagement_pts = _engagement_score(ch.get("engagement_rate", 0.0))
-        size_pts = _audience_size_score(ch.get("subscriber_count", 0))
+        size_pts = _audience_size_score(subs)
         tutorial_pts = _tutorial_score(ch.get("recent_video_titles", []))
         upload_pts = _upload_recency_score(ch.get("upload_frequency_days", 0.0))
 
