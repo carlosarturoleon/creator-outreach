@@ -1,3 +1,4 @@
+import re
 import time
 
 from src.logger import get_logger
@@ -31,6 +32,15 @@ def _invoke_with_backoff(structured_llm, prompt: str):
                     continue
             raise
     raise last_exc
+
+_EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+
+
+def _extract_email(text: str) -> str | None:
+    """Return the first email address found in text, or None."""
+    m = _EMAIL_RE.search(text or "")
+    return m.group(0) if m else None
+
 
 EMAIL_PROMPT = """You are writing a personalized outreach email on behalf of Windsor.ai to invite a YouTube creator to their affiliate program.
 
@@ -77,9 +87,13 @@ def generate_emails(state: GraphState) -> dict:
     influencers = state.get("scored_influencers", [])
     log.info("generate_emails START — generating emails for %d influencers", len(influencers))
     emails: list[dict] = []
+    contacts_found = 0
     for i, influencer in enumerate(influencers, 1):
         cid = influencer["channel_id"]
         ch = enriched_map.get(cid, {})
+        contact_email = _extract_email(ch.get("description", ""))
+        if contact_email:
+            contacts_found += 1
 
         prompt = EMAIL_PROMPT.format(
             channel_title=influencer["channel_title"],
@@ -110,6 +124,7 @@ def generate_emails(state: GraphState) -> dict:
             "subject_line": subject,
             "email_body": body,
             "personalization_hooks": hooks,
+            "contact_email": contact_email,
         }
         emails.append(email_data)
 
@@ -120,7 +135,8 @@ def generate_emails(state: GraphState) -> dict:
             log.error("  DB upsert failed for %s: %s", cid, e)
             errors.append(err_msg)
 
-    log.info("generate_emails DONE — %d emails generated, %d errors", len(emails), len(errors))
+    log.info("generate_emails DONE — %d emails generated, %d with contact email, %d errors",
+             len(emails), contacts_found, len(errors))
     return {
         "outreach_emails": emails,
         "error_log": errors,

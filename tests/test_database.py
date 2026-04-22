@@ -178,13 +178,13 @@ def test_mark_channels_filtered_empty_list_no_error(db):
 # outreach_emails — get_emailed_channel_ids
 # ---------------------------------------------------------------------------
 
-def _insert_email(db, channel_id, sent_at=None):
+def _insert_email(db, channel_id, sent_at=None, contact_email=None):
     """Helper to insert an email record directly via SQL."""
     conn = sqlite3.connect(db.db_path)
     conn.execute(
-        "INSERT INTO outreach_emails (channel_id, subject_line, email_body, personalization_hooks, generated_at, sent_at)"
-        " VALUES (?, ?, ?, ?, datetime('now'), ?)",
-        (channel_id, "Subject", "Body", "[]", sent_at),
+        "INSERT INTO outreach_emails (channel_id, subject_line, email_body, personalization_hooks, contact_email, generated_at, sent_at)"
+        " VALUES (?, ?, ?, ?, ?, datetime('now'), ?)",
+        (channel_id, "Subject", "Body", "[]", contact_email, sent_at),
     )
     conn.commit()
     conn.close()
@@ -261,3 +261,125 @@ def test_finish_run_sets_status_failed(db):
     row = conn.execute("SELECT status FROM runs WHERE run_id = ?", (run_id,)).fetchone()
     conn.close()
     assert row[0] == "failed"
+
+
+# ---------------------------------------------------------------------------
+# contact_email — channels table
+# ---------------------------------------------------------------------------
+
+def test_upsert_channel_stores_contact_email(db):
+    data = _channel_data()
+    data["contact_email"] = "creator@example.com"
+    db.upsert_channel(data)
+
+    conn = sqlite3.connect(db.db_path)
+    row = conn.execute(
+        "SELECT contact_email FROM channels WHERE channel_id = ?", ("UC_test_001",)
+    ).fetchone()
+    conn.close()
+    assert row[0] == "creator@example.com"
+
+
+def test_upsert_channel_contact_email_defaults_to_none(db):
+    db.upsert_channel(_channel_data())  # no contact_email key
+
+    conn = sqlite3.connect(db.db_path)
+    row = conn.execute(
+        "SELECT contact_email FROM channels WHERE channel_id = ?", ("UC_test_001",)
+    ).fetchone()
+    conn.close()
+    assert row[0] is None
+
+
+def test_upsert_channel_preserves_existing_contact_email_on_update(db):
+    data = _channel_data()
+    data["contact_email"] = "original@example.com"
+    db.upsert_channel(data)
+
+    # Upsert again without contact_email — should not overwrite
+    db.upsert_channel(_channel_data())
+
+    conn = sqlite3.connect(db.db_path)
+    row = conn.execute(
+        "SELECT contact_email FROM channels WHERE channel_id = ?", ("UC_test_001",)
+    ).fetchone()
+    conn.close()
+    assert row[0] == "original@example.com"
+
+
+# ---------------------------------------------------------------------------
+# contact_email — outreach_emails table
+# ---------------------------------------------------------------------------
+
+def test_upsert_email_stores_contact_email(db):
+    db.upsert_channel(_channel_data())
+    db.upsert_email({
+        "channel_id": "UC_test_001",
+        "subject_line": "Hi",
+        "email_body": "Body",
+        "personalization_hooks": [],
+        "contact_email": "creator@example.com",
+    })
+
+    conn = sqlite3.connect(db.db_path)
+    row = conn.execute(
+        "SELECT contact_email FROM outreach_emails WHERE channel_id = ?", ("UC_test_001",)
+    ).fetchone()
+    conn.close()
+    assert row[0] == "creator@example.com"
+
+
+def test_upsert_email_contact_email_none_when_not_found(db):
+    db.upsert_channel(_channel_data())
+    db.upsert_email({
+        "channel_id": "UC_test_001",
+        "subject_line": "Hi",
+        "email_body": "Body",
+        "personalization_hooks": [],
+        "contact_email": None,
+    })
+
+    conn = sqlite3.connect(db.db_path)
+    row = conn.execute(
+        "SELECT contact_email FROM outreach_emails WHERE channel_id = ?", ("UC_test_001",)
+    ).fetchone()
+    conn.close()
+    assert row[0] is None
+
+
+# ---------------------------------------------------------------------------
+# migrate_add_contact_email
+# ---------------------------------------------------------------------------
+
+def test_migration_adds_column_to_existing_db(tmp_path):
+    """Simulate an old DB without contact_email — migration should add it."""
+    db = Database(db_path=str(tmp_path / "old.db"))
+    db.init_db()
+
+    # Drop the contact_email column to simulate an old DB
+    conn = sqlite3.connect(db.db_path)
+    conn.execute("CREATE TABLE channels_old AS SELECT channel_id, channel_title FROM channels")
+    conn.execute("DROP TABLE channels")
+    conn.execute("ALTER TABLE channels_old RENAME TO channels")
+    conn.commit()
+    conn.close()
+
+    # Verify column is missing
+    conn = sqlite3.connect(db.db_path)
+    cols_before = [r[1] for r in conn.execute("PRAGMA table_info(channels)").fetchall()]
+    conn.close()
+    assert "contact_email" not in cols_before
+
+    # Run migration
+    db.migrate_add_contact_email()
+
+    conn = sqlite3.connect(db.db_path)
+    cols_after = [r[1] for r in conn.execute("PRAGMA table_info(channels)").fetchall()]
+    conn.close()
+    assert "contact_email" in cols_after
+
+
+def test_migration_is_idempotent(db):
+    """Running migration twice should not raise."""
+    db.migrate_add_contact_email()
+    db.migrate_add_contact_email()  # second call must not error

@@ -17,7 +17,9 @@ def main() -> None:
         sys.exit(1)
 
     # Initialize DB schema once at startup
-    Database().init_db()
+    db_init = Database()
+    db_init.init_db()
+    db_init.migrate_add_contact_email()
 
     parser = argparse.ArgumentParser(
         description="Windsor.ai YouTube Influencer Finder",

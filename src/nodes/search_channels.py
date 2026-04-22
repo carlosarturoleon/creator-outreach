@@ -54,7 +54,14 @@ def search_channels(state: GraphState) -> dict:
 
     for i, keyword in enumerate(keywords, 1):
         if keyword in already_searched:
-            log.info("  [%d/%d] Skipping (already searched): %r", i, total, keyword)
+            cached = db.get_channels_by_keyword(keyword)
+            for ch in cached:
+                cid = ch.get("channel_id")
+                if cid and cid not in seen_ids:
+                    seen_ids.add(cid)
+                    new_channels.append(ch)
+            log.info("  [%d/%d] Skipping (already searched): %r — loaded %d channels from DB",
+                     i, total, keyword, len(cached))
             continue
         try:
             log.info("  [%d/%d] Searching: %r", i, total, keyword)
@@ -70,9 +77,11 @@ def search_channels(state: GraphState) -> dict:
                     seen_ids.add(cid)
                     new_channels.append(ch)
                     added += 1
-                    # Save immediately — search results survive crashes this way
+                    # Save immediately — search results survive crashes this way.
+                    # touch_last_updated=False preserves any existing enrichment
+                    # timestamp so the enrichment cache is not incorrectly reset.
                     try:
-                        db.upsert_channel(ch)
+                        db.upsert_channel(ch, touch_last_updated=False)
                     except Exception as db_err:
                         db_errors += 1
                         log.warning("  DB save failed for %s: %s", cid, db_err)

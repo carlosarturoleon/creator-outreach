@@ -1,7 +1,7 @@
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 class Database:
@@ -36,7 +36,8 @@ class Database:
                     search_keyword TEXT,
                     first_seen_at TEXT,
                     last_updated_at TEXT,
-                    passed_filter_at TEXT
+                    passed_filter_at TEXT,
+                    contact_email TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS scored_influencers (
@@ -55,6 +56,7 @@ class Database:
                     subject_line TEXT,
                     email_body TEXT,
                     personalization_hooks TEXT,
+                    contact_email TEXT,
                     generated_at TEXT,
                     sent_at TEXT
                 );
@@ -95,6 +97,14 @@ class Database:
                 );
             """)
 
+    def migrate_add_contact_email(self) -> None:
+        """Add contact_email column to existing tables if not present (safe to run repeatedly)."""
+        with self._connect() as conn:
+            for table in ("channels", "outreach_emails"):
+                cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+                if "contact_email" not in cols:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN contact_email TEXT")
+
     def get_cached_channels(self, channel_ids: list[str], max_age_days: int = 7) -> dict[str, dict]:
         """Return enriched channel rows from DB that were updated within max_age_days.
         Key is channel_id. Only channels with a non-NULL last_updated_at are returned.
@@ -102,7 +112,7 @@ class Database:
         if not channel_ids:
             return {}
         from datetime import timedelta
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
         placeholders = ",".join("?" * len(channel_ids))
         with self._connect() as conn:
             rows = conn.execute(
@@ -129,7 +139,7 @@ class Database:
         if not channel_ids:
             return {}
         from datetime import timedelta
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
         placeholders = ",".join("?" * len(channel_ids))
         with self._connect() as conn:
             rows = conn.execute(
@@ -158,8 +168,8 @@ class Database:
             ).fetchall()
         return {row["channel_id"] for row in rows}
 
-    def upsert_channel(self, data: dict) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+    def upsert_channel(self, data: dict, touch_last_updated: bool = True) -> None:
+        now = datetime.now().isoformat()
         with self._connect() as conn:
             existing = conn.execute(
                 "SELECT first_seen_at FROM channels WHERE channel_id = ?",
@@ -167,15 +177,24 @@ class Database:
             ).fetchone()
             first_seen = existing["first_seen_at"] if existing else now
 
-            conn.execute("""
+            # When touch_last_updated=False (e.g. initial search save), preserve the
+            # existing last_updated_at so the enrichment cache is not incorrectly
+            # invalidated by the short-description search snippet.
+            last_updated_clause = (
+                "last_updated_at = excluded.last_updated_at"
+                if touch_last_updated
+                else "last_updated_at = COALESCE(channels.last_updated_at, excluded.last_updated_at)"
+            )
+
+            conn.execute(f"""
                 INSERT INTO channels (
                     channel_id, channel_title, description,
                     subscriber_count, total_view_count, video_count,
                     country, default_language, keywords,
                     avg_views_per_video, avg_likes_per_video, avg_comments_per_video,
                     engagement_rate, upload_frequency_days, recent_video_titles,
-                    search_keyword, first_seen_at, last_updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    search_keyword, first_seen_at, last_updated_at, contact_email
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(channel_id) DO UPDATE SET
                     channel_title = excluded.channel_title,
                     description = excluded.description,
@@ -192,7 +211,8 @@ class Database:
                     upload_frequency_days = excluded.upload_frequency_days,
                     recent_video_titles = excluded.recent_video_titles,
                     search_keyword = excluded.search_keyword,
-                    last_updated_at = excluded.last_updated_at
+                    {last_updated_clause},
+                    contact_email = COALESCE(excluded.contact_email, channels.contact_email)
             """, (
                 data.get("channel_id"),
                 data.get("channel_title"),
@@ -212,10 +232,11 @@ class Database:
                 data.get("search_keyword"),
                 first_seen,
                 now,
+                data.get("contact_email"),
             ))
 
     def upsert_scored_influencer(self, data: dict) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         breakdown = data.get("score_breakdown", {})
         with self._connect() as conn:
             conn.execute("""
@@ -245,7 +266,7 @@ class Database:
 
     def create_run(self, run_id: str, config: dict) -> None:
         """Insert a new run record at pipeline start."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         with self._connect() as conn:
             conn.execute("""
                 INSERT INTO runs (
@@ -265,7 +286,7 @@ class Database:
 
     def finish_run(self, run_id: str, stats: dict, status: str = "completed") -> None:
         """Update the run record with final stats and status."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         with self._connect() as conn:
             conn.execute("""
                 UPDATE runs SET
@@ -296,12 +317,29 @@ class Database:
 
     def add_log_entry(self, run_id: str, level: str, logger: str, message: str) -> None:
         """Insert a single log line into run_logs."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO run_logs (run_id, logged_at, level, logger, message) VALUES (?, ?, ?, ?, ?)",
                 (run_id, now, level, logger, message),
             )
+
+    def get_channels_by_keyword(self, keyword: str) -> list[dict]:
+        """Return all channels discovered for a given search keyword."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM channels WHERE search_keyword = ?", (keyword,)
+            ).fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            for col in ("keywords", "recent_video_titles"):
+                try:
+                    d[col] = json.loads(d[col]) if d[col] else []
+                except (ValueError, TypeError):
+                    d[col] = []
+            result.append(d)
+        return result
 
     def get_searched_keywords(self) -> set[str]:
         """Return all keywords that have been successfully searched."""
@@ -316,7 +354,7 @@ class Database:
 
     def mark_keyword_searched(self, keyword: str, channels_found: int) -> None:
         """Record that a keyword was successfully searched."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         with self._connect() as conn:
             conn.execute("""
                 INSERT INTO searched_keywords (keyword, searched_at, channels_found)
@@ -330,7 +368,7 @@ class Database:
         """Set passed_filter_at timestamp for channels that passed all filters."""
         if not channel_ids:
             return
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         with self._connect() as conn:
             conn.executemany(
                 "UPDATE channels SET passed_filter_at = ? WHERE channel_id = ?",
@@ -338,22 +376,24 @@ class Database:
             )
 
     def upsert_email(self, data: dict) -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now().isoformat()
         with self._connect() as conn:
             conn.execute("""
                 INSERT INTO outreach_emails (
                     channel_id, subject_line, email_body,
-                    personalization_hooks, generated_at, sent_at
-                ) VALUES (?, ?, ?, ?, ?, NULL)
+                    personalization_hooks, contact_email, generated_at, sent_at
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL)
                 ON CONFLICT(channel_id) DO UPDATE SET
                     subject_line = excluded.subject_line,
                     email_body = excluded.email_body,
                     personalization_hooks = excluded.personalization_hooks,
+                    contact_email = excluded.contact_email,
                     generated_at = excluded.generated_at
             """, (
                 data.get("channel_id"),
                 data.get("subject_line", ""),
                 data.get("email_body", ""),
                 json.dumps(data.get("personalization_hooks", [])),
+                data.get("contact_email"),
                 now,
             ))

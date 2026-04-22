@@ -11,6 +11,15 @@ log = get_logger(__name__)
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
+def _is_quota_error(e: HttpError) -> bool:
+    if e.resp.status != 403:
+        return False
+    reason = ""
+    if e.error_details:
+        reason = e.error_details[0].get("reason", "")
+    return reason in ("quotaExceeded", "rateLimitExceeded") or "quota" in str(e).lower()
+
+
 def _execute_with_backoff(request, max_retries: int = 5):
     """Execute a YouTube API request with exponential backoff on quota/server errors."""
     delay = 1.0
@@ -20,11 +29,7 @@ def _execute_with_backoff(request, max_retries: int = 5):
         except HttpError as e:
             status = e.resp.status
             if status == 403:
-                # Check if it's a quota exceeded error (not an auth error)
-                reason = ""
-                if e.error_details:
-                    reason = e.error_details[0].get("reason", "")
-                if reason in ("quotaExceeded", "rateLimitExceeded") or "quota" in str(e).lower():
+                if _is_quota_error(e):
                     if attempt < max_retries - 1:
                         log.warning("YouTube quota exceeded, retrying in %.1fs (attempt %d/%d)",
                                     delay, attempt + 1, max_retries)
@@ -45,14 +50,41 @@ def _execute_with_backoff(request, max_retries: int = 5):
 
 class YouTubeClient:
     def __init__(self):
-        self.service = build("youtube", "v3", developerKey=settings.youtube_api_key)
+        self._keys = list(settings.youtube_api_keys)
+        self._key_index = 0
+        self.service = self._build_service()
+
+    def _build_service(self):
+        key = self._keys[self._key_index]
+        log.debug("YouTubeClient using API key index %d", self._key_index)
+        return build("youtube", "v3", developerKey=key)
+
+    def _rotate_key(self) -> bool:
+        """Switch to the next API key. Returns True if a new key is available."""
+        if self._key_index + 1 >= len(self._keys):
+            return False
+        self._key_index += 1
+        log.warning("YouTube quota exhausted — rotating to API key %d/%d",
+                    self._key_index + 1, len(self._keys))
+        self.service = self._build_service()
+        return True
+
+    def _execute(self, request_fn):
+        """Build and execute a request, rotating API key on quota exhaustion if possible."""
+        while True:
+            try:
+                return _execute_with_backoff(request_fn(self.service))
+            except HttpError as e:
+                if _is_quota_error(e) and self._rotate_key():
+                    continue  # retry with new key
+                raise
 
     def search_channels(self, keyword: str, max_results: int = 20) -> list[dict]:
         """
         Search YouTube channels by keyword.
         Quota cost: 100 units per call.
         """
-        response = _execute_with_backoff(self.service.search().list(
+        response = self._execute(lambda svc: svc.search().list(
             q=keyword,
             type="channel",
             part="snippet",
@@ -80,8 +112,9 @@ class YouTubeClient:
         results = []
         for i in range(0, len(channel_ids), 50):
             batch = channel_ids[i : i + 50]
-            response = _execute_with_backoff(self.service.channels().list(
-                id=",".join(batch),
+            batch_ids = ",".join(batch)
+            response = self._execute(lambda svc, ids=batch_ids: svc.channels().list(
+                id=ids,
                 part="snippet,statistics,brandingSettings",
             ))
 
@@ -97,6 +130,7 @@ class YouTubeClient:
                     "video_count": int(stats.get("videoCount", 0)),
                     "country": snippet.get("country"),
                     "default_language": snippet.get("defaultLanguage"),
+                    "description": snippet.get("description", ""),
                     "keywords": keywords_raw.split() if keywords_raw else [],
                 })
         return results
@@ -110,7 +144,7 @@ class YouTubeClient:
         Total cost: ~3 units (vs 100+ units via search.list).
         """
         # Step 1: get uploads playlist ID (1 unit)
-        ch_response = _execute_with_backoff(self.service.channels().list(
+        ch_response = self._execute(lambda svc: svc.channels().list(
             id=channel_id,
             part="contentDetails",
         ))
@@ -126,7 +160,7 @@ class YouTubeClient:
             return self._empty_video_stats()
 
         # Step 2: get recent video IDs from uploads playlist (1 unit)
-        playlist_response = _execute_with_backoff(self.service.playlistItems().list(
+        playlist_response = self._execute(lambda svc: svc.playlistItems().list(
             playlistId=uploads_playlist_id,
             part="snippet,contentDetails",
             maxResults=max_videos,
@@ -141,7 +175,7 @@ class YouTubeClient:
         publish_dates = [item["snippet"]["publishedAt"] for item in playlist_items]
 
         # Step 3: get statistics for all video IDs in one call (1 unit)
-        videos_response = _execute_with_backoff(self.service.videos().list(
+        videos_response = self._execute(lambda svc: svc.videos().list(
             id=",".join(video_ids),
             part="statistics",
         ))
