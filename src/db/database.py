@@ -46,6 +46,8 @@ class Database:
                     engagement_score REAL,
                     audience_size_score REAL,
                     relevance_score REAL,
+                    tutorial_score REAL DEFAULT 0,
+                    upload_recency_score REAL DEFAULT 0,
                     relevance_rationale TEXT,
                     niche_tags TEXT,
                     scored_at TEXT
@@ -96,6 +98,14 @@ class Database:
                     message TEXT NOT NULL
                 );
             """)
+
+    def migrate_scoring_v2(self) -> None:
+        """Add tutorial_score and upload_recency_score columns to scored_influencers if missing."""
+        with self._connect() as conn:
+            cols = [row[1] for row in conn.execute("PRAGMA table_info(scored_influencers)").fetchall()]
+            for col in ("tutorial_score", "upload_recency_score"):
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE scored_influencers ADD COLUMN {col} REAL DEFAULT 0")
 
     def migrate_add_contact_email(self) -> None:
         """Add contact_email column to existing tables if not present (safe to run repeatedly)."""
@@ -243,13 +253,16 @@ class Database:
                 INSERT INTO scored_influencers (
                     channel_id, composite_score, engagement_score,
                     audience_size_score, relevance_score,
+                    tutorial_score, upload_recency_score,
                     relevance_rationale, niche_tags, scored_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(channel_id) DO UPDATE SET
                     composite_score = excluded.composite_score,
                     engagement_score = excluded.engagement_score,
                     audience_size_score = excluded.audience_size_score,
                     relevance_score = excluded.relevance_score,
+                    tutorial_score = excluded.tutorial_score,
+                    upload_recency_score = excluded.upload_recency_score,
                     relevance_rationale = excluded.relevance_rationale,
                     niche_tags = excluded.niche_tags,
                     scored_at = excluded.scored_at
@@ -259,6 +272,8 @@ class Database:
                 breakdown.get("engagement", 0.0),
                 breakdown.get("audience_size", 0.0),
                 breakdown.get("relevance", 0.0),
+                breakdown.get("tutorial", 0.0),
+                breakdown.get("upload_recency", 0.0),
                 data.get("relevance_rationale", ""),
                 json.dumps(data.get("niche_tags", [])),
                 now,

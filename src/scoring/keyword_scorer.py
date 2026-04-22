@@ -236,16 +236,10 @@ def score_channel_relevance(ch: dict) -> dict:
             "keyword_score_raw": 0,
         }
 
-    upload_pts = _upload_freq_score(ch.get("upload_frequency_days", 0.0))
-    view_pts = _view_ratio_score(
-        ch.get("avg_views_per_video", 0.0),
-        ch.get("subscriber_count", 0),
-    )
-
-    # Composite on a 0-50 raw scale, then scale to 0-30
-    raw_composite = (keyword_pts * 0.6) + (upload_pts * 0.2) + (view_pts * 0.2)
-    # keyword_pts max ≈ 50 (all high-value); raw_composite max ≈ 32; scale to 30
-    relevance_score = round(min(30.0, raw_composite * (30.0 / 32.0)), 2)
+    # keyword_pts max ≈ 50 (all high-value); scale directly to 0-30
+    # Upload frequency and view ratio are now top-level scoring components in
+    # score_influencers.py — removed here to avoid double-counting.
+    relevance_score = round(min(30.0, keyword_pts * (30.0 / 50.0)), 2)
 
     niche_tags = _infer_niche_tags(matched)
 
@@ -260,10 +254,7 @@ def score_channel_relevance(ch: dict) -> dict:
         fit = "weak fit"
 
     top_kws = ", ".join(matched[:4]) if matched else "general marketing"
-    rationale = (
-        f"{fit.capitalize()} for Windsor.ai — matched keywords: {top_kws}. "
-        f"Upload frequency score: {upload_pts:.0f}/10, view ratio score: {view_pts:.1f}/10."
-    )
+    rationale = f"{fit.capitalize()} for Windsor.ai — matched keywords: {top_kws}."
 
     return {
         "relevance_score": relevance_score,
