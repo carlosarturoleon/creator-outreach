@@ -73,15 +73,19 @@ Write a personalized outreach email for this YouTube creator using the write_ema
 
 Creator:
 - Channel: {channel_title} ({subscribers:,} subscribers, {engagement_rate:.2f}% engagement)
+- Channel description: {description}
 - Why they fit Windsor.ai: {llm_rationale}
 - Recent video titles: {video_titles}
 - Niche tags: {niche_tags}
+
+For the greeting, extract the creator's first name from the channel description if mentioned \
+(e.g. "My name is X", "I'm X", "Hi, I'm X"). If no name is found, use the channel name.
 
 The email MUST follow this exact structure — use the same section headings and order:
 
 ---
 
-Hey [first name or channel name],
+Hey [creator's first name, or channel name if unknown],
 
 [1 sentences — Hook + credibility] Open by acknowledging what makes their content stand out \
 and what their track record or audience focus reveals about the problems they solve. \
@@ -158,10 +162,12 @@ def build_email_requests(
             influencer.get("relevance_rationale", "strong fit for Windsor.ai affiliate program"),
         )
 
+        description = ch.get("description", "") or ""
         user_msg = _USER_PROMPT_TEMPLATE.format(
             channel_title=influencer["channel_title"],
             subscribers=influencer.get("subscriber_count", 0),
             engagement_rate=influencer.get("engagement_rate", 0.0),
+            description=description[:600],
             llm_rationale=llm_rationale,
             video_titles=", ".join(ch.get("recent_video_titles", [])[:8]),
             niche_tags=", ".join(niche_tags) if niche_tags else "marketing analytics",
