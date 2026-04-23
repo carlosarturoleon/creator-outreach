@@ -114,6 +114,17 @@ class Database:
                 if col not in cols:
                     conn.execute(f"ALTER TABLE scored_influencers ADD COLUMN {col} {definition}")
 
+    def migrate_llm_scoring(self) -> None:
+        """Add llm_score and llm_rationale columns to scored_influencers if missing."""
+        with self._connect() as conn:
+            cols = [row[1] for row in conn.execute("PRAGMA table_info(scored_influencers)").fetchall()]
+            for col, definition in [
+                ("llm_score", "INTEGER DEFAULT NULL"),
+                ("llm_rationale", "TEXT DEFAULT NULL"),
+            ]:
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE scored_influencers ADD COLUMN {col} {definition}")
+
     def select_influencers(self, channel_ids: list[str]) -> int:
         """Mark the given channel_ids as selected. Returns count updated."""
         if not channel_ids:
@@ -161,7 +172,7 @@ class Database:
         with self._connect() as conn:
             rows = conn.execute(
                 f"SELECT * FROM channels WHERE channel_id IN ({placeholders})"
-                f" AND last_updated_at >= ?",
+                f" AND last_updated_at >= ? AND subscriber_count > 0",
                 (*channel_ids, cutoff),
             ).fetchall()
         result = {}
@@ -282,14 +293,17 @@ class Database:
     def upsert_scored_influencer(self, data: dict) -> None:
         now = datetime.now().isoformat()
         breakdown = data.get("score_breakdown", {})
+        llm_score = data.get("llm_score")       # None if not yet LLM-scored
+        llm_rationale = data.get("llm_rationale")
         with self._connect() as conn:
             conn.execute("""
                 INSERT INTO scored_influencers (
                     channel_id, composite_score, engagement_score,
                     audience_size_score, relevance_score,
                     tutorial_score, upload_recency_score,
-                    relevance_rationale, niche_tags, scored_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    relevance_rationale, niche_tags, scored_at,
+                    llm_score, llm_rationale
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(channel_id) DO UPDATE SET
                     composite_score = excluded.composite_score,
                     engagement_score = excluded.engagement_score,
@@ -299,7 +313,9 @@ class Database:
                     upload_recency_score = excluded.upload_recency_score,
                     relevance_rationale = excluded.relevance_rationale,
                     niche_tags = excluded.niche_tags,
-                    scored_at = excluded.scored_at
+                    scored_at = excluded.scored_at,
+                    llm_score = COALESCE(excluded.llm_score, scored_influencers.llm_score),
+                    llm_rationale = COALESCE(excluded.llm_rationale, scored_influencers.llm_rationale)
             """, (
                 data.get("channel_id"),
                 data.get("composite_score", 0.0),
@@ -311,6 +327,8 @@ class Database:
                 data.get("relevance_rationale", ""),
                 json.dumps(data.get("niche_tags", [])),
                 now,
+                llm_score,
+                llm_rationale,
             ))
 
     def create_run(self, run_id: str, config: dict) -> None:
@@ -412,6 +430,17 @@ class Database:
                     searched_at = excluded.searched_at,
                     channels_found = excluded.channels_found
             """, (keyword, now, channels_found))
+
+    def mark_emails_sent(self, channel_ids: list[str]) -> None:
+        """Set sent_at timestamp on outreach_emails rows that were successfully delivered."""
+        if not channel_ids:
+            return
+        now = datetime.now().isoformat()
+        with self._connect() as conn:
+            conn.executemany(
+                "UPDATE outreach_emails SET sent_at = ? WHERE channel_id = ?",
+                [(now, cid) for cid in channel_ids],
+            )
 
     def mark_channels_filtered(self, channel_ids: list[str]) -> None:
         """Set passed_filter_at timestamp for channels that passed all filters."""

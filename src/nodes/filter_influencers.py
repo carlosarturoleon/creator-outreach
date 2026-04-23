@@ -5,13 +5,23 @@ from src.db.database import Database
 log = get_logger(__name__)
 
 WINDSOR_AI_NICHES = {
+    # Core marketing / attribution
     "marketing", "analytics", "attribution", "digital marketing",
-    "seo", "ppc", "advertising", "data", "saas", "performance marketing",
-    "google analytics", "facebook ads", "media buying", "growth hacking",
-    "ecommerce", "bi", "business intelligence", "tracking", "data studio",
-    "looker", "bigquery", "spreadsheet", "dashboard", "conversion",
+    "seo", "ppc", "performance marketing", "paid advertising",
+    "conversion tracking", "media buying", "growth hacking",
     "affiliate", "paid ads", "paid media", "martech", "marketing technology",
-    "ads manager", "google ads", "tiktok ads", "linkedin ads",
+    # Windsor.ai data sources
+    "google analytics", "ga4", "gtm", "google tag manager",
+    "facebook ads", "meta ads", "google ads", "tiktok ads", "linkedin ads",
+    "pinterest ads", "snapchat ads", "amazon ads", "amazon seller",
+    "hubspot", "salesforce", "shopify", "stripe",
+    # Windsor.ai destinations
+    "looker studio", "data studio", "looker", "bigquery", "snowflake",
+    "amazon redshift", "power bi", "tableau", "google sheets",
+    "microsoft excel",
+    # Broader niche
+    "ecommerce", "saas", "ads manager", "data",
+    "business intelligence",
 }
 
 

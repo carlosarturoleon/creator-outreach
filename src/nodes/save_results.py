@@ -60,6 +60,22 @@ def save_results(state: GraphState) -> dict:
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(full_output, f, indent=2, ensure_ascii=False)
 
+    # LLM score stats
+    llm_scores = [
+        inf["llm_score"] for inf in state.get("scored_influencers", [])
+        if inf.get("llm_score") is not None
+    ]
+    if llm_scores:
+        llm_avg = sum(llm_scores) / len(llm_scores)
+        llm_min = min(llm_scores)
+        llm_max = max(llm_scores)
+    else:
+        llm_avg = llm_min = llm_max = None
+
+    # Email stats
+    emails = state.get("outreach_emails", [])
+    emails_with_contact = sum(1 for e in emails if e.get("contact_email"))
+
     # Print summary
     print(f"\n{'='*60}")
     print("Windsor.ai Influencer Finder — Run Complete")
@@ -70,6 +86,9 @@ def save_results(state: GraphState) -> dict:
     print(f"  After enrichment:     {full_output['total_enriched']}")
     print(f"  After filtering:      {full_output['total_filtered']}")
     print(f"  Scored & ranked:      {full_output['total_scored']}")
+    if llm_avg is not None:
+        print(f"  LLM score:            avg {llm_avg:.1f} | min {llm_min} | max {llm_max} ({len(llm_scores)} scored)")
+    print(f"  Emails generated:     {len(emails)} ({emails_with_contact} with contact email, {len(emails) - emails_with_contact} missing)")
     if full_output["errors"]:
         print(f"  Errors logged:        {len(full_output['errors'])}")
     print(f"  Output CSV:           {csv_path}")

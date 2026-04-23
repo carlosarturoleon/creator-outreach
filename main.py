@@ -21,6 +21,7 @@ def main() -> None:
     db_init.init_db()
     db_init.migrate_add_contact_email()
     db_init.migrate_scoring_v2()
+    db_init.migrate_llm_scoring()
 
     parser = argparse.ArgumentParser(
         description="Windsor.ai YouTube Influencer Finder",

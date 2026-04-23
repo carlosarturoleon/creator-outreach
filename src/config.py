@@ -27,6 +27,13 @@ class Config:
     claude_model: str = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
     max_videos_to_sample: int = int(os.getenv("MAX_VIDEOS_TO_SAMPLE", "10"))
     output_dir: str = os.getenv("OUTPUT_DIR", "output")
+    # SMTP / email sending
+    smtp_host: str = os.getenv("SMTP_HOST", "smtp.gmail.com")
+    smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user: str = os.getenv("SMTP_USER", "")
+    smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+    email_from: str = os.getenv("EMAIL_FROM", "")
+    email_test_override: str = os.getenv("EMAIL_TEST_OVERRIDE", "")
 
     def validate(self) -> None:
         if not self.youtube_api_key:
