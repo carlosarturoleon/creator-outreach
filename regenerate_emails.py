@@ -30,18 +30,22 @@ def main() -> None:
             SELECT s.channel_id, s.composite_score, s.llm_score, s.llm_rationale,
                    s.relevance_rationale, s.niche_tags,
                    c.channel_title, c.subscriber_count, c.engagement_rate,
-                   c.description, c.keywords, c.recent_video_titles
+                   c.description, c.keywords, c.recent_video_titles, c.contact_email
             FROM scored_influencers s
             JOIN channels c ON s.channel_id = c.channel_id
             WHERE s.llm_score IS NOT NULL
+              AND c.contact_email IS NOT NULL
+              AND c.contact_email != ''
             ORDER BY s.llm_score DESC, s.composite_score DESC
         """).fetchall()
 
     if not score_rows:
-        print("No LLM-scored influencers found in DB. Run the pipeline first.")
+        print("No LLM-scored influencers with a contact email found.")
+        print("Use: python scripts/set_email.py \"Channel Name\" email@example.com")
+        print("  or python scripts/import_emails.py output/channels_export.csv")
         sys.exit(1)
 
-    print(f"Found {len(score_rows)} LLM-scored influencer(s) — regenerating emails...\n")
+    print(f"Found {len(score_rows)} LLM-scored influencer(s) with contact email — generating emails...\n")
 
     # Build influencer dicts and enriched_map matching what generate_emails expects
     influencers = []
@@ -80,6 +84,7 @@ def main() -> None:
             "description": d["description"] or "",
             "keywords": keywords,
             "recent_video_titles": recent_video_titles,
+            "contact_email": d["contact_email"],
         }
 
     # Build and submit batch
@@ -95,16 +100,13 @@ def main() -> None:
     results = fetch_email_results(batch_id)
 
     # Persist to DB
-    import re
-    email_re = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 
     for influencer in influencers:
         cid = influencer["channel_id"]
         result = results.get(cid, {})
         ch = enriched_map[cid]
 
-        contact_email_match = email_re.search(ch.get("description", ""))
-        contact_email = contact_email_match.group(0) if contact_email_match else None
+        contact_email = ch.get("contact_email") or None
 
         if result.get("success"):
             subject = result["subject_line"]

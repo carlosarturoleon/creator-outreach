@@ -44,16 +44,23 @@ def generate_emails(state: GraphState) -> dict:
         log.info("generate_emails — no influencers to email, skipping")
         return {"outreach_emails": [], "error_log": [], "current_phase": "email_generation_complete"}
 
-    log.info("generate_emails START — submitting %d influencers to email batch", len(influencers))
-
-    # Build contact email map first (regex scan of channel descriptions)
+    # Build contact email map (regex scan of channel descriptions)
     contact_map = {
         inf["channel_id"]: _extract_email(
             enriched_map.get(inf["channel_id"], {}).get("description", "")
         )
         for inf in influencers
     }
-    contacts_found = sum(1 for v in contact_map.values() if v)
+
+    # Only generate emails for influencers with a known contact email
+    influencers = [inf for inf in influencers if contact_map.get(inf["channel_id"])]
+    contacts_found = len(influencers)
+
+    if not influencers:
+        log.info("generate_emails — no influencers have a contact email, skipping batch")
+        return {"outreach_emails": [], "error_log": [], "current_phase": "email_generation_complete"}
+
+    log.info("generate_emails START — %d influencer(s) have contact email, submitting batch", contacts_found)
 
     # Build and submit batch
     requests = build_email_requests(
