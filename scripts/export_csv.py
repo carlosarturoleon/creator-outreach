@@ -63,6 +63,7 @@ def main():
                 c.keywords,
                 c.recent_video_titles,
                 c.description,
+                'https://youtube.com/channel/' || c.channel_id AS youtube_url,
                 c.contact_email,
                 CASE WHEN c.passed_filter_at IS NOT NULL THEN 1 ELSE 0 END AS passed_filter,
                 c.first_seen_at,
@@ -73,12 +74,16 @@ def main():
                 ROUND(s.tutorial_score, 2)         AS tutorial_score,
                 ROUND(s.upload_recency_score, 2)   AS upload_recency_score,
                 s.selected,
+                s.llm_score,
+                s.llm_rationale,
                 s.relevance_rationale,
                 s.niche_tags
             FROM channels c
             JOIN scored_influencers s ON c.channel_id = s.channel_id
             WHERE c.subscriber_count >= 1000
-            ORDER BY s.composite_score DESC
+              AND s.llm_score IS NOT NULL
+              AND c.channel_id NOT IN (SELECT channel_id FROM outreach_emails WHERE sent_at IS NOT NULL)
+            ORDER BY s.llm_score DESC, s.composite_score DESC
         """
         fieldnames = [
             "channel_title", "channel_id", "subscriber_count", "engagement_rate",
@@ -86,10 +91,10 @@ def main():
             "avg_comments_per_video", "total_view_count", "video_count",
             "country", "default_language", "search_keyword",
             "keywords", "recent_video_titles", "description",
-            "contact_email", "passed_filter", "first_seen_at",
+            "youtube_url", "contact_email", "passed_filter", "first_seen_at",
             "composite_score", "engagement_score", "audience_size_score",
             "relevance_score", "tutorial_score", "upload_recency_score",
-            "selected", "relevance_rationale", "niche_tags",
+            "selected", "llm_score", "llm_rationale", "relevance_rationale", "niche_tags",
         ]
     else:
         query = """
@@ -143,7 +148,7 @@ def main():
                 d["description"] = d["description"][:300]
             writer.writerow(d)
 
-    mode = "scored (sorted by composite_score)" if scored else "unscored (sorted by subscriber_count)"
+    mode = "scored (sorted by llm_score, composite_score)" if scored else "unscored (sorted by subscriber_count)"
     print(f"Exported {len(rows)} channels [{mode}] → {os.path.abspath(CSV_PATH)}")
 
 

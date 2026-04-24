@@ -1,3 +1,5 @@
+import re
+
 from src.logger import get_logger
 from src.state import GraphState
 from src.tools.youtube_client import YouTubeClient
@@ -6,8 +8,13 @@ from src.config import settings
 
 log = get_logger(__name__)
 
-
 _ENRICH_CACHE_DAYS = 7  # reuse DB stats if updated within this many days
+_EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+
+
+def _extract_email(text: str) -> str | None:
+    m = _EMAIL_RE.search(text or "")
+    return m.group(0) if m else None
 
 
 def enrich_channel_data(state: GraphState) -> dict:
@@ -41,6 +48,16 @@ def enrich_channel_data(state: GraphState) -> dict:
         if ch["channel_id"] in cached_map:
             # Merge search_keyword from the current search run onto the cached row
             cached_ch = {**cached_map[ch["channel_id"]], "search_keyword": ch.get("search_keyword")}
+            # Extract email from description if not already set
+            if not cached_ch.get("contact_email"):
+                extracted = _extract_email(cached_ch.get("description", ""))
+                if extracted:
+                    cached_ch["contact_email"] = extracted
+                    try:
+                        db.upsert_channel(cached_ch)
+                    except Exception as e:
+                        log.warning("  Email upsert failed for %s: %s", ch["channel_id"], e)
+                    log.info("  Extracted email for cached %s: %s", cached_ch.get("channel_title"), extracted)
             fresh.append(cached_ch)
         else:
             stale.append(ch)
@@ -86,6 +103,14 @@ def enrich_channel_data(state: GraphState) -> dict:
                 video_stats = client._empty_video_stats()
 
             enriched_ch = {**ch, **stats, **video_stats}
+
+            # Extract contact email from description if not already set
+            if not enriched_ch.get("contact_email"):
+                extracted = _extract_email(enriched_ch.get("description", ""))
+                if extracted:
+                    enriched_ch["contact_email"] = extracted
+                    log.info("    Extracted email for %s: %s", title, extracted)
+
             enriched.append(enriched_ch)
 
             try:

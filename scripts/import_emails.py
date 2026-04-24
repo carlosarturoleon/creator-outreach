@@ -10,6 +10,9 @@ Usage:
 """
 import csv
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.db.database import Database
 
@@ -22,8 +25,8 @@ def main() -> None:
     csv_path = sys.argv[1]
 
     try:
-        with open(csv_path, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
+        with open(csv_path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f, delimiter=";")
             if "channel_id" not in (reader.fieldnames or []):
                 print("Error: CSV must have a 'channel_id' column.")
                 sys.exit(1)

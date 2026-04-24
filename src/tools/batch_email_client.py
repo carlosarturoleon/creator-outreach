@@ -123,9 +123,14 @@ Windsor.ai
 ---
 
 Tone: direct and genuine — one professional writing to another.
-Subject line: always use exactly "30% lifetime rev share for your audience" — do not change it.
 No flattery openers ("amazing channel", "love your work"). No "I hope this finds you well". \
-No "sponsorship".\
+No "sponsorship".
+
+Language: detect the channel's language from the description and video titles. \
+If the channel is primarily in Spanish, write the entire email in Spanish, including the \
+subject line — use "30% de comisión vitalicia para tu audiencia". \
+In all other cases — including Portuguese, French, or any other language — write in English \
+with subject line "30% lifetime rev share for your audience".\
 """
 
 
