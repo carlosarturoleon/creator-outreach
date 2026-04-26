@@ -26,7 +26,10 @@ def main() -> None:
 
     try:
         with open(csv_path, newline="", encoding="utf-8-sig") as f:
-            reader = csv.DictReader(f, delimiter=";")
+            sample = f.read(4096)
+            f.seek(0)
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;")
+            reader = csv.DictReader(f, dialect=dialect)
             if "channel_id" not in (reader.fieldnames or []):
                 print("Error: CSV must have a 'channel_id' column.")
                 sys.exit(1)

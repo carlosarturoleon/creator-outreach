@@ -41,6 +41,44 @@ def _build_message(
     return msg
 
 
+def _print_summary(sent_ids: list[str], candidates: list) -> None:
+    """Print a summary list of successfully sent emails."""
+    sent_set = set(sent_ids)
+    rows = [r for r in candidates if r["channel_id"] in sent_set]
+
+    db = Database()
+    with db._connect() as conn:
+        subs = {
+            r["channel_id"]: r["subscriber_count"]
+            for r in conn.execute(
+                "SELECT channel_id, subscriber_count FROM channels WHERE channel_id IN ({})".format(
+                    ",".join("?" * len(sent_ids))
+                ),
+                sent_ids,
+            ).fetchall()
+        }
+
+    table = []
+    for row in rows:
+        cid = row["channel_id"]
+        table.append({
+            "URL": f"https://www.youtube.com/channel/{cid}",
+            "Subscribers": f"{subs.get(cid, 0):,}",
+            "Email": row["contact_email"] or "—",
+        })
+
+    cols = ["URL", "Subscribers", "Email"]
+    widths = {c: max(len(c), max(len(r[c]) for r in table)) for c in cols}
+    sep = "─" + "─┼─".join("─" * widths[c] for c in cols) + "─"
+    header = " " + " │ ".join(c.ljust(widths[c]) for c in cols) + " "
+    print(f"\n── Sent emails summary {'─' * (len(sep) - 22)}")
+    print(header)
+    print(sep)
+    for r in table:
+        print(" " + " │ ".join(r[c].ljust(widths[c]) for c in cols) + " ")
+    print(sep)
+
+
 def send_emails(limit: int = 0, dry_run: bool = False) -> None:
     db = Database()
     test_override = settings.email_test_override.strip()
@@ -119,6 +157,7 @@ def send_emails(limit: int = 0, dry_run: bool = False) -> None:
         if sent_ids:
             db.mark_emails_sent(sent_ids)
             print(f"\n{len(sent_ids)} email(s) sent and marked in DB.")
+            _print_summary(sent_ids, candidates)
     else:
         print(f"\nDRY RUN complete — {len(sent_ids)} email(s) would be sent.")
 
