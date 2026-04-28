@@ -56,16 +56,9 @@ to any BI tool, spreadsheet, or data warehouse — no code needed
 - Revenue share examples to include: 10 clients at $100/mo = $300/mo passive | \
 50 clients = $1,500/mo | 100 clients = $3,000/mo
 
-Every email must end with these exact words:
-
-And with one video mention, the revenue can keep compounding because the rev share is lifetime.
-
-Worth exploring?
-
-Best,
-Carlos Leon
-Looker Studio & Marketing Data Expert
-Windsor.ai\
+Every email must be written entirely in the language detected from the channel's description \
+and video titles. If the channel is primarily in Spanish, write the entire email in Spanish, \
+including the closing lines.\
 """
 
 _USER_PROMPT_TEMPLATE = """\
