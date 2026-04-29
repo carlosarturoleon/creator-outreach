@@ -99,6 +99,11 @@ class Database:
                     logger TEXT NOT NULL,
                     message TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS affiliate_promoters (
+                    email TEXT PRIMARY KEY,
+                    imported_at TEXT DEFAULT (datetime('now'))
+                );
             """)
 
     def migrate_scoring_v2(self) -> None:
@@ -452,6 +457,48 @@ class Database:
                 "UPDATE channels SET passed_filter_at = ? WHERE channel_id = ?",
                 [(now, cid) for cid in channel_ids],
             )
+
+    def import_promoters_from_csv(self, csv_path: str) -> tuple[int, int, int]:
+        """Import affiliate promoter emails from a CSV file.
+
+        Only the 'email' column is read. Values are validated against a basic
+        email regex and lowercased before insert. Duplicate emails are skipped.
+
+        Returns (inserted, skipped_duplicates, skipped_invalid).
+        """
+        import csv
+        import re
+        _email_re = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+        inserted = skipped_dup = skipped_invalid = 0
+        now = datetime.now().isoformat()
+
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+
+        with self._connect() as conn:
+            for row in rows:
+                raw = (row.get("email") or "").strip().lower()
+                if not _email_re.match(raw):
+                    skipped_invalid += 1
+                    continue
+                try:
+                    conn.execute(
+                        "INSERT INTO affiliate_promoters (email, imported_at) VALUES (?, ?)",
+                        (raw, now),
+                    )
+                    inserted += 1
+                except sqlite3.IntegrityError:
+                    skipped_dup += 1
+
+        return inserted, skipped_dup, skipped_invalid
+
+    def get_promoter_emails(self) -> set[str]:
+        """Return the set of all known affiliate promoter emails (lowercased)."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT email FROM affiliate_promoters").fetchall()
+        return {row["email"] for row in rows}
 
     def upsert_email(self, data: dict) -> None:
         now = datetime.now().isoformat()

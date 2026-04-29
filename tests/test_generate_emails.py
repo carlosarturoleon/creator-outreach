@@ -1,5 +1,6 @@
-"""Tests for email extraction in src/nodes/generate_emails.py."""
+"""Tests for email extraction and promoter filtering in src/nodes/generate_emails.py."""
 import pytest
+from unittest.mock import MagicMock, patch
 from src.nodes.generate_emails import _extract_email
 
 
@@ -55,3 +56,124 @@ def test_extracts_email_embedded_in_url_like_text():
     # Should still find the email even with surrounding punctuation
     result = _extract_email("(contact@example.com)")
     assert result == "contact@example.com"
+
+
+# ---------------------------------------------------------------------------
+# generate_emails node — promoter filtering
+# ---------------------------------------------------------------------------
+
+def _make_influencer(channel_id, email):
+    """Return a minimal influencer dict with a contact email in the description."""
+    return {
+        "channel_id": channel_id,
+        "channel_title": f"Channel {channel_id}",
+        "composite_score": 60.0,
+        "llm_rationale": "Good fit.",
+        "niche_tags": ["analytics"],
+        "description": f"Email me at {email}",
+    }
+
+
+def _build_state(influencers):
+    enriched = [
+        {**inf, "description": inf["description"]}
+        for inf in influencers
+    ]
+    return {
+        "scored_influencers": influencers,
+        "enriched_channels": enriched,
+        "run_id": "test-run",
+    }
+
+
+@patch("src.nodes.generate_emails.Database")
+@patch("src.nodes.generate_emails.submit_batch", return_value="batch-123")
+@patch("src.nodes.generate_emails.wait_for_batch")
+@patch("src.nodes.generate_emails.fetch_email_results")
+@patch("src.nodes.generate_emails.build_email_requests", return_value=[])
+def test_promoter_email_is_excluded_from_batch(
+    mock_build, mock_fetch, mock_wait, mock_submit, mock_db_cls
+):
+    """Influencers whose contact email is a known promoter must not enter the batch."""
+    promoter_email = "promoter@example.com"
+    non_promoter_email = "newbie@example.com"
+
+    mock_db = MagicMock()
+    mock_db.get_promoter_emails.return_value = {promoter_email}
+    mock_db_cls.return_value = mock_db
+
+    mock_fetch.return_value = {
+        "UC_new": {
+            "success": True,
+            "subject_line": "Join Windsor.ai",
+            "email_body": "Hi there",
+            "personalization_hooks": [],
+        }
+    }
+
+    influencers = [
+        _make_influencer("UC_promoter", promoter_email),
+        _make_influencer("UC_new", non_promoter_email),
+    ]
+    state = _build_state(influencers)
+
+    from src.nodes.generate_emails import generate_emails
+    result = generate_emails(state)
+
+    # build_email_requests must only receive the non-promoter
+    called_influencers = mock_build.call_args[1]["influencers"]
+    channel_ids = [inf["channel_id"] for inf in called_influencers]
+    assert "UC_promoter" not in channel_ids
+    assert "UC_new" in channel_ids
+
+
+@patch("src.nodes.generate_emails.Database")
+def test_all_promoters_skips_batch_entirely(mock_db_cls):
+    """If all influencers are promoters, the batch must not be submitted."""
+    promoter_email = "promoter@example.com"
+
+    mock_db = MagicMock()
+    mock_db.get_promoter_emails.return_value = {promoter_email}
+    mock_db_cls.return_value = mock_db
+
+    influencers = [_make_influencer("UC_promoter", promoter_email)]
+    state = _build_state(influencers)
+
+    with patch("src.nodes.generate_emails.submit_batch") as mock_submit:
+        from src.nodes.generate_emails import generate_emails
+        result = generate_emails(state)
+        mock_submit.assert_not_called()
+
+    assert result["outreach_emails"] == []
+
+
+@patch("src.nodes.generate_emails.Database")
+@patch("src.nodes.generate_emails.submit_batch", return_value="batch-123")
+@patch("src.nodes.generate_emails.wait_for_batch")
+@patch("src.nodes.generate_emails.fetch_email_results")
+@patch("src.nodes.generate_emails.build_email_requests", return_value=[])
+def test_no_promoters_in_db_passes_all_through(
+    mock_build, mock_fetch, mock_wait, mock_submit, mock_db_cls
+):
+    """When the promoter table is empty, no influencer is filtered out."""
+    mock_db = MagicMock()
+    mock_db.get_promoter_emails.return_value = set()
+    mock_db_cls.return_value = mock_db
+
+    mock_fetch.return_value = {
+        "UC_001": {
+            "success": True,
+            "subject_line": "Hi",
+            "email_body": "Body",
+            "personalization_hooks": [],
+        }
+    }
+
+    influencers = [_make_influencer("UC_001", "creator@example.com")]
+    state = _build_state(influencers)
+
+    from src.nodes.generate_emails import generate_emails
+    generate_emails(state)
+
+    called_influencers = mock_build.call_args[1]["influencers"]
+    assert any(inf["channel_id"] == "UC_001" for inf in called_influencers)

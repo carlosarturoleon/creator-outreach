@@ -132,6 +132,21 @@ sqlite3 output/influencers.db "
   ORDER BY oe.sent_at DESC;"
 ```
 
+### Manage the affiliate promoter exclusion list
+
+Channels whose contact email matches a known Windsor.ai affiliate are automatically skipped during email generation. Update this list weekly (or whenever the affiliate roster changes):
+
+```bash
+# Import / re-import from the latest promoters.csv (safe to run repeatedly — duplicates are ignored)
+python scripts/import_promoters.py promoters.csv
+```
+
+Check how many promoters are currently in the DB:
+
+```bash
+sqlite3 output/influencers.db "SELECT COUNT(*) FROM affiliate_promoters;"
+```
+
 ### Mark a channel as contacted (sent outside the pipeline)
 
 ```bash

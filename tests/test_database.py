@@ -383,3 +383,78 @@ def test_migration_is_idempotent(db):
     """Running migration twice should not raise."""
     db.migrate_add_contact_email()
     db.migrate_add_contact_email()  # second call must not error
+
+
+# ---------------------------------------------------------------------------
+# affiliate_promoters table
+# ---------------------------------------------------------------------------
+
+def test_import_promoters_inserts_valid_emails(db, tmp_path):
+    csv_file = tmp_path / "promoters.csv"
+    csv_file.write_text("email,name\nhello@example.com,Alice\nworld@domain.org,Bob\n")
+
+    inserted, skipped_dup, skipped_invalid = db.import_promoters_from_csv(str(csv_file))
+
+    assert inserted == 2
+    assert skipped_dup == 0
+    assert skipped_invalid == 0
+
+
+def test_import_promoters_lowercases_emails(db, tmp_path):
+    csv_file = tmp_path / "promoters.csv"
+    csv_file.write_text("email\nHELLO@EXAMPLE.COM\n")
+
+    db.import_promoters_from_csv(str(csv_file))
+
+    emails = db.get_promoter_emails()
+    assert "hello@example.com" in emails
+    assert "HELLO@EXAMPLE.COM" not in emails
+
+
+def test_import_promoters_skips_invalid_emails(db, tmp_path):
+    csv_file = tmp_path / "promoters.csv"
+    csv_file.write_text("email\nnot-an-email\n@missinglocal.com\nvalid@example.com\n")
+
+    inserted, skipped_dup, skipped_invalid = db.import_promoters_from_csv(str(csv_file))
+
+    assert inserted == 1
+    assert skipped_invalid == 2
+
+
+def test_import_promoters_skips_duplicates(db, tmp_path):
+    csv_file = tmp_path / "promoters.csv"
+    csv_file.write_text("email\nduplicate@example.com\n")
+
+    db.import_promoters_from_csv(str(csv_file))
+    inserted, skipped_dup, skipped_invalid = db.import_promoters_from_csv(str(csv_file))
+
+    assert inserted == 0
+    assert skipped_dup == 1
+
+
+def test_import_promoters_skips_injection_attempt(db, tmp_path):
+    csv_file = tmp_path / "promoters.csv"
+    csv_file.write_text('email,company_name\nvalid@example.com,Legit Corp\nhacker@x.com,"<h1>HACKED</h1>${{7*7}}"\n')
+
+    inserted, _, skipped_invalid = db.import_promoters_from_csv(str(csv_file))
+
+    # Both emails are structurally valid — injection is in a different column (ignored)
+    assert inserted == 2
+    assert skipped_invalid == 0
+    emails = db.get_promoter_emails()
+    assert "valid@example.com" in emails
+    assert "hacker@x.com" in emails
+
+
+def test_get_promoter_emails_returns_empty_set_when_none(db):
+    assert db.get_promoter_emails() == set()
+
+
+def test_get_promoter_emails_returns_all_imported(db, tmp_path):
+    csv_file = tmp_path / "promoters.csv"
+    csv_file.write_text("email\nalpha@example.com\nbeta@example.com\n")
+
+    db.import_promoters_from_csv(str(csv_file))
+    emails = db.get_promoter_emails()
+
+    assert emails == {"alpha@example.com", "beta@example.com"}

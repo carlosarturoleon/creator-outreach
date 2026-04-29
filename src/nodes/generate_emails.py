@@ -60,6 +60,25 @@ def generate_emails(state: GraphState) -> dict:
         log.info("generate_emails — no influencers have a contact email, skipping batch")
         return {"outreach_emails": [], "error_log": [], "current_phase": "email_generation_complete"}
 
+    # Skip influencers who are already in the Windsor.ai affiliate program
+    promoter_emails = db.get_promoter_emails()
+    if promoter_emails:
+        before = len(influencers)
+        influencers = [
+            inf for inf in influencers
+            if contact_map.get(inf["channel_id"], "").lower() not in promoter_emails
+        ]
+        skipped_promoters = before - len(influencers)
+        if skipped_promoters:
+            log.info(
+                "generate_emails — skipped %d influencer(s) already in affiliate program",
+                skipped_promoters,
+            )
+
+    if not influencers:
+        log.info("generate_emails — all remaining influencers are existing affiliates, skipping batch")
+        return {"outreach_emails": [], "error_log": [], "current_phase": "email_generation_complete"}
+
     log.info("generate_emails START — %d influencer(s) have contact email, submitting batch", contacts_found)
 
     # Build and submit batch
