@@ -66,13 +66,15 @@ Fill in the `contact_email` column for the channels you want to email. You can:
 - Use emails extracted automatically (already in the column from `extract_emails_from_descriptions.py`)
 - Add emails manually from channel About pages or LinkedIn
 
+For channels where you can't find an email and want to permanently hide from future exports, set `no_email = 1` in that column. They'll be filtered out on the next export and won't appear again.
+
 ### 4. Import emails back to the DB
 
 ```bash
 python scripts/import_emails.py output/channels_export.csv
 ```
 
-Having a contact email is your approval signal — only channels with an email will be emailed.
+Having a contact email is your approval signal — only channels with an email will be emailed. Channels marked `no_email = 1` are flagged in the DB and excluded from all future exports.
 
 ### 5. Generate email text
 

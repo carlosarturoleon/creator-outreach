@@ -42,18 +42,20 @@ def main() -> None:
         sys.exit(1)
 
     db = Database()
+    db.migrate_add_no_email()
+
     updated = 0
+    marked_no_email = 0
     skipped_empty = 0
     not_found = 0
+
+    no_email_ids = []
 
     with db._connect() as conn:
         for row in rows:
             channel_id = row.get("channel_id", "").strip()
             email = row.get("contact_email", "").strip()
-
-            if not email:
-                skipped_empty += 1
-                continue
+            no_email = str(row.get("no_email", "")).strip()
 
             exists = conn.execute(
                 "SELECT channel_title FROM channels WHERE channel_id = ?",
@@ -62,6 +64,14 @@ def main() -> None:
 
             if not exists:
                 not_found += 1
+                continue
+
+            if no_email == "1":
+                no_email_ids.append(channel_id)
+                continue
+
+            if not email:
+                skipped_empty += 1
                 continue
 
             conn.execute(
@@ -75,7 +85,11 @@ def main() -> None:
             print(f"  ✓ {exists['channel_title']}: {email}")
             updated += 1
 
-    print(f"\nDone — {updated} updated, {skipped_empty} skipped (empty), {not_found} not found in DB.")
+    if no_email_ids:
+        marked_no_email = db.mark_no_email(no_email_ids)
+        print(f"  — {marked_no_email} channel(s) flagged as no-email (will be hidden from future exports)")
+
+    print(f"\nDone — {updated} updated, {marked_no_email} no-email, {skipped_empty} skipped (empty), {not_found} not found in DB.")
     if updated:
         print("Run: python send_emails.py --dry-run   to preview")
         print("Run: python send_emails.py             to send")

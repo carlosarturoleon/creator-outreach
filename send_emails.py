@@ -63,7 +63,7 @@ def _print_summary(sent_ids: list[str], candidates: list) -> None:
         cid = row["channel_id"]
         table.append({
             "URL": f"https://www.youtube.com/channel/{cid}",
-            "Subscribers": f"{subs.get(cid, 0):,}",
+            "Subscribers": str(subs.get(cid, 0)),
             "Email": row["contact_email"] or "—",
         })
 

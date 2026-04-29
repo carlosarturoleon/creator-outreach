@@ -458,3 +458,59 @@ def test_get_promoter_emails_returns_all_imported(db, tmp_path):
     emails = db.get_promoter_emails()
 
     assert emails == {"alpha@example.com", "beta@example.com"}
+
+
+# ---------------------------------------------------------------------------
+# migrate_add_no_email + mark_no_email
+# ---------------------------------------------------------------------------
+
+def test_migrate_add_no_email_adds_column(tmp_path):
+    """Migration adds no_email column when it doesn't exist."""
+    db = Database(db_path=str(tmp_path / "test.db"))
+    db.init_db()
+
+    # Simulate old DB without the column
+    conn = sqlite3.connect(db.db_path)
+    conn.execute("CREATE TABLE channels_bak AS SELECT channel_id, channel_title FROM channels")
+    conn.execute("DROP TABLE channels")
+    conn.execute("ALTER TABLE channels_bak RENAME TO channels")
+    conn.commit()
+    conn.close()
+
+    cols_before = [r[1] for r in sqlite3.connect(db.db_path).execute("PRAGMA table_info(channels)").fetchall()]
+    assert "no_email" not in cols_before
+
+    db.migrate_add_no_email()
+
+    cols_after = [r[1] for r in sqlite3.connect(db.db_path).execute("PRAGMA table_info(channels)").fetchall()]
+    assert "no_email" in cols_after
+
+
+def test_migrate_add_no_email_is_idempotent(db):
+    """Running migration twice must not raise."""
+    db.migrate_add_no_email()
+    db.migrate_add_no_email()
+
+
+def test_mark_no_email_sets_flag(db):
+    db.upsert_channel(_channel_data())
+    db.migrate_add_no_email()
+
+    count = db.mark_no_email(["UC_test_001"])
+
+    assert count == 1
+    conn = sqlite3.connect(db.db_path)
+    row = conn.execute("SELECT no_email FROM channels WHERE channel_id = ?", ("UC_test_001",)).fetchone()
+    conn.close()
+    assert row[0] == 1
+
+
+def test_mark_no_email_returns_zero_for_empty_list(db):
+    db.migrate_add_no_email()
+    assert db.mark_no_email([]) == 0
+
+
+def test_mark_no_email_ignores_unknown_ids(db):
+    db.migrate_add_no_email()
+    count = db.mark_no_email(["UC_does_not_exist"])
+    assert count == 0

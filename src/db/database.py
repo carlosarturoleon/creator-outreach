@@ -157,6 +157,25 @@ class Database:
             )
             return cur.rowcount
 
+    def migrate_add_no_email(self) -> None:
+        """Add no_email column to channels table if not present (safe to run repeatedly)."""
+        with self._connect() as conn:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(channels)").fetchall()]
+            if "no_email" not in cols:
+                conn.execute("ALTER TABLE channels ADD COLUMN no_email INTEGER DEFAULT 0")
+
+    def mark_no_email(self, channel_ids: list[str]) -> int:
+        """Flag channels where no contact email can be found. Returns count updated."""
+        if not channel_ids:
+            return 0
+        placeholders = ",".join("?" * len(channel_ids))
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"UPDATE channels SET no_email = 1 WHERE channel_id IN ({placeholders})",
+                channel_ids,
+            )
+            return cur.rowcount
+
     def migrate_add_contact_email(self) -> None:
         """Add contact_email column to existing tables if not present (safe to run repeatedly)."""
         with self._connect() as conn:

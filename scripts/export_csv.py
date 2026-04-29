@@ -42,6 +42,12 @@ def main():
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
 
+    # Ensure no_email column exists (idempotent migration)
+    cols = [r[1] for r in con.execute("PRAGMA table_info(channels)").fetchall()]
+    if "no_email" not in cols:
+        con.execute("ALTER TABLE channels ADD COLUMN no_email INTEGER DEFAULT 0")
+        con.commit()
+
     scored = has_scores(con)
 
     if scored:
@@ -65,6 +71,7 @@ def main():
                 c.description,
                 'https://youtube.com/channel/' || c.channel_id AS youtube_url,
                 c.contact_email,
+                COALESCE(c.no_email, 0) AS no_email,
                 CASE WHEN c.passed_filter_at IS NOT NULL THEN 1 ELSE 0 END AS passed_filter,
                 c.first_seen_at,
                 ROUND(s.composite_score, 2)        AS composite_score,
@@ -83,6 +90,7 @@ def main():
             WHERE c.subscriber_count >= 1000
               AND s.llm_score IS NOT NULL
               AND c.channel_id NOT IN (SELECT channel_id FROM outreach_emails WHERE sent_at IS NOT NULL)
+              AND (c.no_email IS NULL OR c.no_email = 0)
             ORDER BY s.llm_score DESC, s.composite_score DESC
         """
         fieldnames = [
@@ -91,7 +99,7 @@ def main():
             "avg_comments_per_video", "total_view_count", "video_count",
             "country", "default_language", "search_keyword",
             "keywords", "recent_video_titles", "description",
-            "youtube_url", "contact_email", "passed_filter", "first_seen_at",
+            "youtube_url", "contact_email", "no_email", "passed_filter", "first_seen_at",
             "composite_score", "engagement_score", "audience_size_score",
             "relevance_score", "tutorial_score", "upload_recency_score",
             "selected", "llm_score", "llm_rationale", "relevance_rationale", "niche_tags",
@@ -116,9 +124,11 @@ def main():
                 recent_video_titles,
                 description,
                 contact_email,
+                COALESCE(no_email, 0) AS no_email,
                 CASE WHEN passed_filter_at IS NOT NULL THEN 1 ELSE 0 END AS passed_filter,
                 first_seen_at
             FROM channels
+            WHERE (no_email IS NULL OR no_email = 0)
             ORDER BY subscriber_count DESC
         """
         fieldnames = [
@@ -127,7 +137,7 @@ def main():
             "avg_comments_per_video", "total_view_count", "video_count",
             "country", "default_language", "search_keyword",
             "keywords", "recent_video_titles", "description",
-            "contact_email", "passed_filter", "first_seen_at",
+            "contact_email", "no_email", "passed_filter", "first_seen_at",
         ]
 
     rows = con.execute(query).fetchall()
