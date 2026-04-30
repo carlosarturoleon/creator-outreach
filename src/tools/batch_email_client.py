@@ -78,7 +78,9 @@ The email MUST follow this exact structure — use the same section headings and
 
 ---
 
-Hey [creator's first name, or channel name if unknown],
+Use the language-appropriate greeting:
+- If writing in Spanish: "Hola [nombre],"
+- If writing in English or any other language: "Hey [name],"
 
 [1 sentences — Hook + credibility] Open by acknowledging what makes their content stand out \
 and what their track record or audience focus reveals about the problems they solve. \
