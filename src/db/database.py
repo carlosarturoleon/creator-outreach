@@ -37,7 +37,8 @@ class Database:
                     first_seen_at TEXT,
                     last_updated_at TEXT,
                     passed_filter_at TEXT,
-                    contact_email TEXT
+                    contact_email TEXT,
+                    contact_emails TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS scored_influencers (
@@ -176,6 +177,21 @@ class Database:
             )
             return cur.rowcount
 
+    def get_no_email_channel_ids(self) -> set[str]:
+        """Return channel_ids permanently marked as no_email=1."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT channel_id FROM channels WHERE no_email = 1"
+            ).fetchall()
+        return {row["channel_id"] for row in rows}
+
+    def migrate_add_contact_emails(self) -> None:
+        """Add contact_emails JSON column to channels table if not present."""
+        with self._connect() as conn:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(channels)").fetchall()]
+            if "contact_emails" not in cols:
+                conn.execute("ALTER TABLE channels ADD COLUMN contact_emails TEXT")
+
     def migrate_add_contact_email(self) -> None:
         """Add contact_email column to existing tables if not present (safe to run repeatedly)."""
         with self._connect() as conn:
@@ -272,8 +288,9 @@ class Database:
                     country, default_language, keywords,
                     avg_views_per_video, avg_likes_per_video, avg_comments_per_video,
                     engagement_rate, upload_frequency_days, recent_video_titles,
-                    search_keyword, first_seen_at, last_updated_at, contact_email
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    search_keyword, first_seen_at, last_updated_at, contact_email,
+                    contact_emails
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(channel_id) DO UPDATE SET
                     channel_title = excluded.channel_title,
                     description = excluded.description,
@@ -291,7 +308,8 @@ class Database:
                     recent_video_titles = excluded.recent_video_titles,
                     search_keyword = excluded.search_keyword,
                     {last_updated_clause},
-                    contact_email = COALESCE(excluded.contact_email, channels.contact_email)
+                    contact_email = COALESCE(excluded.contact_email, channels.contact_email),
+                    contact_emails = COALESCE(excluded.contact_emails, channels.contact_emails)
             """, (
                 data.get("channel_id"),
                 data.get("channel_title"),
@@ -312,6 +330,7 @@ class Database:
                 first_seen,
                 now,
                 data.get("contact_email"),
+                json.dumps(data["contact_emails"]) if data.get("contact_emails") else None,
             ))
 
     def upsert_scored_influencer(self, data: dict) -> None:

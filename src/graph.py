@@ -8,6 +8,7 @@ from src.nodes.search_channels import search_channels
 from src.nodes.deduplicate_vs_db import deduplicate_vs_db
 from src.nodes.pre_filter_by_description import pre_filter_by_description
 from src.nodes.enrich_channel_data import enrich_channel_data
+from src.nodes.scrape_contact_emails import scrape_contact_emails
 from src.nodes.filter_influencers import filter_influencers
 from src.nodes.score_influencers import score_influencers
 from src.nodes.llm_score_influencers import llm_score_influencers
@@ -62,6 +63,7 @@ def build_graph():
     builder.add_node("deduplicate_vs_db", deduplicate_vs_db)
     builder.add_node("pre_filter_by_description", pre_filter_by_description)
     builder.add_node("enrich_channel_data", enrich_channel_data)
+    builder.add_node("scrape_contact_emails", scrape_contact_emails)
     builder.add_node("filter_influencers", filter_influencers)
     builder.add_node("score_influencers", score_influencers)
     builder.add_node("llm_score_influencers", llm_score_influencers)
@@ -90,7 +92,8 @@ def build_graph():
     # stop_after_filter mode — both map to END above.
 
     builder.add_edge("score_influencers", "llm_score_influencers")
-    builder.add_edge("llm_score_influencers", "generate_emails")
+    builder.add_edge("llm_score_influencers", "scrape_contact_emails")
+    builder.add_edge("scrape_contact_emails", "generate_emails")
     builder.add_edge("generate_emails", "save_results")
     builder.add_edge("save_results", END)
 

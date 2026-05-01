@@ -35,8 +35,10 @@ def generate_emails(state: GraphState) -> dict:
     db = Database()
     errors: list[str] = []
 
+    # Prefer scraped_channels (has contact_emails from web scraping), fall back to enriched_channels
+    source_channels = state.get("scraped_channels") or state.get("enriched_channels", [])
     enriched_map: dict[str, dict] = {
-        ch["channel_id"]: ch for ch in state.get("enriched_channels", [])
+        ch["channel_id"]: ch for ch in source_channels
     }
     influencers = state.get("scored_influencers", [])
 
@@ -44,10 +46,12 @@ def generate_emails(state: GraphState) -> dict:
         log.info("generate_emails — no influencers to email, skipping")
         return {"outreach_emails": [], "error_log": [], "current_phase": "email_generation_complete"}
 
-    # Build contact email map (regex scan of channel descriptions)
+    # Build contact email map: prefer contact_email already resolved (from enrich or scraping),
+    # fall back to regex scan of description for backwards compatibility.
     contact_map = {
-        inf["channel_id"]: _extract_email(
-            enriched_map.get(inf["channel_id"], {}).get("description", "")
+        inf["channel_id"]: (
+            enriched_map.get(inf["channel_id"], {}).get("contact_email")
+            or _extract_email(enriched_map.get(inf["channel_id"], {}).get("description", ""))
         )
         for inf in influencers
     }

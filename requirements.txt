@@ -8,3 +8,6 @@ python-dotenv>=1.0.0
 typing-extensions>=4.12.0
 pytest>=8.0.0
 pytest-mock>=3.14.0
+httpx>=0.27.0
+beautifulsoup4>=4.12.0
+email-scraper>=0.2.0

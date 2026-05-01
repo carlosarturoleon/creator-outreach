@@ -29,3 +29,5 @@ class GraphState(TypedDict):
     run_id: str
     # Plain overwrite: set by pre_filter_by_description, read by enrich_channel_data
     pre_filtered_channels: list[dict]
+    # Plain overwrite: set by scrape_contact_emails, read by filter_influencers
+    scraped_channels: list[dict]
