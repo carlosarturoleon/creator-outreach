@@ -111,6 +111,16 @@ python scripts/extract_emails_from_descriptions.py
 
 Scans channel descriptions in the DB for email addresses and saves them. Run before exporting CSV to pre-fill as many emails as possible.
 
+### Find contact emails from website URLs
+
+```bash
+python -m scripts.find_contact_emails digismoothie.com clairepells.com
+python -m scripts.find_contact_emails --file urls.txt
+python -m scripts.find_contact_emails --verbose digismoothie.com  # show scraping steps
+```
+
+Given one or more website URLs (bare domains work too), scrapes the site for a contact email. Checks nav/footer links first, then tries common paths (`/contact`, `/contact-us`, `/about`), and falls back to a headless browser (playwright) for JS-rendered sites.
+
 ### Check what's pending
 
 ```bash

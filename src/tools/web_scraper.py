@@ -206,10 +206,11 @@ def _scrape_generic(url: str, timeout: int) -> list[str]:
     """Fetch a URL and extract contact emails.
 
     Strategy:
-    1. Fetch the page.
+    1. Fetch the page with httpx.
     2. Find contact/about links in nav and footer.
     3. Add common fallback paths (/contact, /contact-us, /about).
-    4. Scrape all candidates (including the original page) and return first match.
+    4. Scrape all candidates and return first match.
+    5. If nothing found, retry candidates with playwright (JS-rendered fallback).
     """
     try:
         with httpx.Client(headers=_HEADERS, timeout=timeout, follow_redirects=True) as client:
@@ -231,6 +232,7 @@ def _scrape_generic(url: str, timeout: int) -> list[str]:
     if url not in candidates:
         candidates.append(url)
 
+    # --- httpx pass ---
     try:
         with httpx.Client(headers=_HEADERS, timeout=timeout, follow_redirects=True) as client:
             for subpage in candidates:
@@ -244,5 +246,38 @@ def _scrape_generic(url: str, timeout: int) -> list[str]:
                     continue
     except Exception:
         pass
+
+    # --- playwright fallback (JS-rendered pages) ---
+    log.debug("No emails via httpx for %s — retrying with playwright", url)
+    return _scrape_with_playwright(candidates, timeout)
+
+
+def _scrape_with_playwright(candidates: list[str], timeout: int) -> list[str]:
+    """Re-fetch candidate pages using a headless browser and extract emails."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        log.debug("playwright not installed — skipping JS fallback")
+        return []
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
+            for subpage in candidates:
+                try:
+                    page.goto(subpage, timeout=timeout * 1000, wait_until="networkidle")
+                    html = page.content()
+                    found = {e.lower() for e in scrape_emails(html) if not _is_junk_email(e)}
+                    if found:
+                        log.debug("playwright found emails on %s", subpage)
+                        browser.close()
+                        return sorted(found)
+                except Exception:
+                    continue
+            browser.close()
+    except Exception as exc:
+        log.debug("playwright fallback failed: %s", exc)
 
     return []
