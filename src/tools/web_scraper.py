@@ -8,7 +8,7 @@ Public API:
 
 import json
 import re
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -59,6 +59,9 @@ def _is_junk_email(email: str) -> bool:
     email = email.lower()
     # Reject Sentry DSN-style paths embedded as email addresses
     if email.startswith("/"):
+        return True
+    # Reject JSON unicode escape artifacts (e.g. u003esupport@...)
+    if re.search(r"u[0-9a-f]{4}", email.split("@")[0]):
         return True
     try:
         local, domain = email.rsplit("@", 1)
@@ -163,8 +166,51 @@ def _scrape_linktree(handle: str, timeout: int) -> list[str]:
         return []
 
 
+_CONTACT_KEYWORDS = {"contact", "about", "reach", "hire", "work-with", "get-in-touch", "connect", "touch"}
+
+
+def _score_contact_link(url: str) -> int:
+    lower = url.lower()
+    return sum(1 for kw in _CONTACT_KEYWORDS if kw in lower)
+
+
+def _find_contact_links(html: str, base_url: str) -> list[str]:
+    """Extract and rank nav/footer links that look like contact/about pages."""
+    soup = BeautifulSoup(html, "html.parser")
+    base_netloc = urlparse(base_url).netloc
+
+    # Prefer nav/footer — that's where contact links reliably live
+    containers = soup.find_all(["nav", "footer"]) or [soup]
+
+    seen: set[str] = set()
+    candidates: list[tuple[int, str]] = []
+
+    for container in containers:
+        for tag in container.find_all("a", href=True):
+            href = tag["href"].split("#")[0].split("?")[0].strip()
+            if not href or href.startswith("mailto:"):
+                continue
+            full = urljoin(base_url, href) if not href.startswith("http") else href
+            if urlparse(full).netloc != base_netloc:
+                continue
+            score = _score_contact_link(full)
+            if score > 0 and full not in seen:
+                seen.add(full)
+                candidates.append((score, full))
+
+    candidates.sort(reverse=True)
+    return [u for _, u in candidates[:4]]
+
+
 def _scrape_generic(url: str, timeout: int) -> list[str]:
-    """Fetch a generic URL and extract all email addresses using email-scraper."""
+    """Fetch a URL and extract contact emails.
+
+    Strategy:
+    1. Fetch the page.
+    2. Find contact/about links in nav and footer.
+    3. Add common fallback paths (/contact, /contact-us, /about).
+    4. Scrape all candidates (including the original page) and return first match.
+    """
     try:
         with httpx.Client(headers=_HEADERS, timeout=timeout, follow_redirects=True) as client:
             resp = client.get(url)
@@ -174,9 +220,29 @@ def _scrape_generic(url: str, timeout: int) -> list[str]:
         log.debug("Generic fetch failed for %s: %s", url, exc)
         return []
 
+    parsed = urlparse(url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+
+    # Build ordered list: nav/footer candidates first, then fallbacks, then the page itself
+    candidates: list[str] = _find_contact_links(html, url)
+    for fallback in [f"{base}/contact", f"{base}/contact-us", f"{base}/about"]:
+        if fallback not in candidates:
+            candidates.append(fallback)
+    if url not in candidates:
+        candidates.append(url)
+
     try:
-        found = {e for e in scrape_emails(html) if not _is_junk_email(e)}
-        return sorted(found) if found else []
-    except Exception as exc:
-        log.debug("Generic email scrape failed for %s: %s", url, exc)
-        return []
+        with httpx.Client(headers=_HEADERS, timeout=timeout, follow_redirects=True) as client:
+            for subpage in candidates:
+                try:
+                    page_html = html if subpage == url else client.get(subpage).text
+                    found = {e for e in scrape_emails(page_html) if not _is_junk_email(e)}
+                    if found:
+                        log.debug("Found emails on %s", subpage)
+                        return sorted(found)
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    return []
