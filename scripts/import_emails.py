@@ -3,12 +3,15 @@ import_emails.py — Bulk-import contact emails from a filled-in CSV.
 
 Reads the `channel_id` and `contact_email` columns from the export CSV,
 updates both `channels` and `outreach_emails` tables for any row that has
-a non-empty email.
+a non-empty email. Multiple emails can be entered as comma-separated values
+in the `contact_email` cell (e.g. "a@x.com, b@x.com"); the first becomes
+the primary and all are saved to `contact_emails`.
 
 Usage:
     python import_emails.py output/channels_export.csv
 """
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -54,7 +57,7 @@ def main() -> None:
     with db._connect() as conn:
         for row in rows:
             channel_id = row.get("channel_id", "").strip()
-            email = row.get("contact_email", "").strip()
+            email_raw = row.get("contact_email", "").strip()
             no_email = str(row.get("no_email", "")).strip()
 
             exists = conn.execute(
@@ -70,19 +73,24 @@ def main() -> None:
                 no_email_ids.append(channel_id)
                 continue
 
-            if not email:
+            if not email_raw:
                 skipped_empty += 1
                 continue
 
+            # Support comma-separated multiple emails; first is primary
+            emails = [e.strip() for e in email_raw.split(",") if e.strip()]
+            primary_email = emails[0]
+
             conn.execute(
-                "UPDATE channels SET contact_email = ? WHERE channel_id = ?",
-                (email, channel_id),
+                "UPDATE channels SET contact_email = ?, contact_emails = ? WHERE channel_id = ?",
+                (primary_email, json.dumps(emails), channel_id),
             )
             conn.execute(
                 "UPDATE outreach_emails SET contact_email = ? WHERE channel_id = ?",
-                (email, channel_id),
+                (primary_email, channel_id),
             )
-            print(f"  ✓ {exists['channel_title']}: {email}")
+            label = email_raw if len(emails) == 1 else f"{primary_email} (+{len(emails)-1} more)"
+            print(f"  ✓ {exists['channel_title']}: {label}")
             updated += 1
 
     if no_email_ids:

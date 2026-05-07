@@ -71,8 +71,17 @@ Creator:
 - Recent video titles: {video_titles}
 - Niche tags: {niche_tags}
 
-For the greeting, extract the creator's first name from the channel description if mentioned \
-(e.g. "My name is X", "I'm X", "Hi, I'm X"). If no name is found, use the channel name.
+For the greeting, follow this priority order:
+1. Extract the creator's first name from the channel description if mentioned \
+(e.g. "My name is X", "I'm X", "Hi, I'm X", "Soy X", "Me llamo X"). Use that first name.
+2. If the channel appears to be a company, agency, or brand — indicated by words like Agency, \
+Media, Studio, Group, LLC, Inc., Corp, Co., Consulting, Marketing, Digital, Solutions, or the \
+name reads as a brand rather than a person — use a neutral team greeting:
+   - English: "Hi [Company Name] team,"
+   - Spanish: "Hola, equipo de [Company Name],"
+3. Otherwise, if the name reads like a personal handle or individual creator, use it directly:
+   - English: "Hey [channel name],"
+   - Spanish: "Hola [channel name],"
 
 The email MUST follow this exact structure — use the same section headings and order:
 

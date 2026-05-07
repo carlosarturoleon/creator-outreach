@@ -36,12 +36,19 @@ def scrape_verbose(url: str) -> list[str]:
     parsed = urlparse(url)
     base = f"{parsed.scheme}://{parsed.netloc}"
 
+    parts = parsed.netloc.split(".")
+    root_base = f"{parsed.scheme}://{'.'.join(parts[-2:])}" if len(parts) > 2 else None
+
     candidates = _find_contact_links(resp.text, url)
     print(f"  Nav/footer contact links found: {candidates or '(none)'}")
 
     for fallback in [f"{base}/contact", f"{base}/contact-us", f"{base}/about"]:
         if fallback not in candidates:
             candidates.append(fallback)
+    if root_base:
+        for fallback in [f"{root_base}/contact", f"{root_base}/contact-us", f"{root_base}/about"]:
+            if fallback not in candidates:
+                candidates.append(fallback)
     if url not in candidates:
         candidates.append(url)
 

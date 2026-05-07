@@ -54,6 +54,14 @@ _JUNK_EMAIL_PREFIXES = {
 }
 
 
+def _clean_html(html: str) -> str:
+    """Remove input/textarea tags before email scanning to avoid placeholder pollution."""
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup.find_all(["input", "textarea"]):
+        tag.decompose()
+    return str(soup)
+
+
 def _is_junk_email(email: str) -> bool:
     """Return True if the email is a known placeholder or system address."""
     email = email.lower()
@@ -159,7 +167,7 @@ def _scrape_linktree(handle: str, timeout: int) -> list[str]:
 
     # Fall back to email-scraper on full HTML
     try:
-        found = {e for e in scrape_emails(html) if not _is_junk_email(e)}
+        found = {e for e in scrape_emails(_clean_html(html)) if not _is_junk_email(e)}
         return sorted(found) if found else []
     except Exception as exc:
         log.debug("Linktree HTML email scrape failed for %s: %s", url, exc)
@@ -224,28 +232,46 @@ def _scrape_generic(url: str, timeout: int) -> list[str]:
     parsed = urlparse(url)
     base = f"{parsed.scheme}://{parsed.netloc}"
 
+    # If on a subdomain (e.g. blog.keitaro.io), also try the root domain
+    netloc = parsed.netloc
+    parts = netloc.split(".")
+    root_base = None
+    if len(parts) > 2:
+        root_base = f"{parsed.scheme}://{'.'.join(parts[-2:])}"
+
     # Build ordered list: nav/footer candidates first, then fallbacks, then the page itself
     candidates: list[str] = _find_contact_links(html, url)
     for fallback in [f"{base}/contact", f"{base}/contact-us", f"{base}/about"]:
         if fallback not in candidates:
             candidates.append(fallback)
+    if root_base:
+        for fallback in [f"{root_base}/contact", f"{root_base}/contact-us", f"{root_base}/about"]:
+            if fallback not in candidates:
+                candidates.append(fallback)
     if url not in candidates:
         candidates.append(url)
 
     # --- httpx pass ---
+    # Fetch all candidate pages first, then scrape outside the client context.
+    # email_scraper has internal state that produces wrong results when called
+    # inside an active httpx.Client session.
+    pages: list[tuple[str, str]] = []
     try:
         with httpx.Client(headers=_HEADERS, timeout=timeout, follow_redirects=True) as client:
             for subpage in candidates:
                 try:
                     page_html = html if subpage == url else client.get(subpage).text
-                    found = {e for e in scrape_emails(page_html) if not _is_junk_email(e)}
-                    if found:
-                        log.debug("Found emails on %s", subpage)
-                        return sorted(found)
+                    pages.append((subpage, page_html))
                 except Exception:
                     continue
     except Exception:
         pass
+
+    for subpage, page_html in pages:
+        found = {e for e in scrape_emails(_clean_html(page_html)) if not _is_junk_email(e)}
+        if found:
+            log.debug("Found emails on %s", subpage)
+            return sorted(found)
 
     # --- playwright fallback (JS-rendered pages) ---
     log.debug("No emails via httpx for %s — retrying with playwright", url)
@@ -269,7 +295,7 @@ def _scrape_with_playwright(candidates: list[str], timeout: int) -> list[str]:
                 try:
                     page.goto(subpage, timeout=timeout * 1000, wait_until="networkidle")
                     html = page.content()
-                    found = {e.lower() for e in scrape_emails(html) if not _is_junk_email(e)}
+                    found = {e.lower() for e in scrape_emails(_clean_html(html)) if not _is_junk_email(e)}
                     if found:
                         log.debug("playwright found emails on %s", subpage)
                         browser.close()

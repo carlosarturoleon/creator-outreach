@@ -36,7 +36,7 @@ def load_influencers(db: Database, channel_ids: list[str] | None) -> tuple[list[
                     JOIN channels c USING (channel_id)
                     WHERE si.channel_id IN ({placeholders})
                       AND c.contact_email IS NOT NULL AND length(c.contact_email) > 0
-                      AND si.channel_id NOT IN (SELECT channel_id FROM outreach_emails WHERE sent_at IS NOT NULL)""",
+                      AND si.channel_id NOT IN (SELECT channel_id FROM outreach_emails WHERE generated_at IS NOT NULL)""",
                 channel_ids,
             ).fetchall()
         else:
@@ -46,7 +46,7 @@ def load_influencers(db: Database, channel_ids: list[str] | None) -> tuple[list[
                    FROM scored_influencers si
                    JOIN channels c USING (channel_id)
                    WHERE c.contact_email IS NOT NULL AND length(c.contact_email) > 0
-                     AND si.channel_id NOT IN (SELECT channel_id FROM outreach_emails WHERE sent_at IS NOT NULL)"""
+                     AND si.channel_id NOT IN (SELECT channel_id FROM outreach_emails WHERE generated_at IS NOT NULL)"""
             ).fetchall()
 
     influencers = []
