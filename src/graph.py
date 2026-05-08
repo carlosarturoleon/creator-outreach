@@ -5,6 +5,7 @@ from src.state import GraphState
 
 log = get_logger(__name__)
 from src.nodes.search_channels import search_channels
+from src.nodes.discover_channels import discover_channels
 from src.nodes.deduplicate_vs_db import deduplicate_vs_db
 from src.nodes.pre_filter_by_description import pre_filter_by_description
 from src.nodes.enrich_channel_data import enrich_channel_data
@@ -60,6 +61,7 @@ def build_graph():
 
     # Register nodes
     builder.add_node("search_channels", search_channels)
+    builder.add_node("discover_channels", discover_channels)
     builder.add_node("deduplicate_vs_db", deduplicate_vs_db)
     builder.add_node("pre_filter_by_description", pre_filter_by_description)
     builder.add_node("enrich_channel_data", enrich_channel_data)
@@ -72,7 +74,8 @@ def build_graph():
 
     # Edges
     builder.add_edge(START, "search_channels")
-    builder.add_edge("search_channels", "deduplicate_vs_db")
+    builder.add_edge("search_channels", "discover_channels")
+    builder.add_edge("discover_channels", "deduplicate_vs_db")
 
     builder.add_conditional_edges(
         "deduplicate_vs_db",

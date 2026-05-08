@@ -43,9 +43,10 @@ See PLAN.md for full architecture documentation.
 
 Graph flow:
 ```
-search_channels → deduplicate_vs_db → enrich_channel_data → filter_influencers
-                                                                    ↓
-                                                          score_influencers → generate_emails → save_results
+search_channels ──┐
+                  ├→ discover_channels → deduplicate_vs_db → enrich_channel_data → filter_influencers
+                  ┘                                                                        ↓
+                                                                           score_influencers → generate_emails → save_results
 ```
 
 ## Key files

@@ -206,6 +206,105 @@ class YouTubeClient:
             "recent_video_titles": video_titles[:5],
         }
 
+    def search_channels_via_videos(self, keyword: str, max_results: int = 50) -> list[dict]:
+        """
+        Search videos by keyword and return unique channel stubs.
+        Surfaces smaller/niche creators that don't appear in channel search.
+        Quota cost: 100 units per call.
+        """
+        response = self._execute(lambda svc: svc.search().list(
+            q=keyword,
+            type="video",
+            part="snippet",
+            maxResults=max_results,
+            relevanceLanguage="en",
+        ))
+
+        seen: set[str] = set()
+        channels = []
+        for item in response.get("items", []):
+            snippet = item.get("snippet", {})
+            channel_id = snippet.get("channelId")
+            if not channel_id or channel_id in seen:
+                continue
+            seen.add(channel_id)
+            channels.append({
+                "channel_id": channel_id,
+                "channel_title": snippet.get("channelTitle", ""),
+                "description": "",
+                "thumbnail_url": "",
+                "search_keyword": keyword,
+            })
+        return channels
+
+    def get_related_channels(
+        self,
+        seed_channel_id: str,
+        max_videos: int = 3,
+        max_related: int = 10,
+    ) -> list[str]:
+        """
+        Find channel IDs related to a seed channel via its recent videos.
+        Uses relatedToVideoId to traverse YouTube's recommendation graph.
+        Quota cost: ~1 (channels.list) + 1 (playlistItems) + 100×max_videos (search) per call.
+        Returns list of channel_id strings (excluding the seed channel itself).
+        """
+        # Step 1: get uploads playlist ID
+        try:
+            ch_response = self._execute(lambda svc: svc.channels().list(
+                id=seed_channel_id,
+                part="contentDetails",
+            ))
+        except HttpError:
+            return []
+
+        items = ch_response.get("items", [])
+        if not items:
+            return []
+        uploads_playlist_id = (
+            items[0]["contentDetails"]["relatedPlaylists"].get("uploads")
+        )
+        if not uploads_playlist_id:
+            return []
+
+        # Step 2: get recent video IDs
+        try:
+            playlist_response = self._execute(lambda svc: svc.playlistItems().list(
+                playlistId=uploads_playlist_id,
+                part="contentDetails",
+                maxResults=max_videos,
+            ))
+        except HttpError:
+            return []
+
+        video_ids = [
+            item["contentDetails"]["videoId"]
+            for item in playlist_response.get("items", [])
+        ]
+        if not video_ids:
+            return []
+
+        # Step 3: search for related videos per seed video
+        related_channel_ids: set[str] = set()
+        for video_id in video_ids:
+            try:
+                response = self._execute(lambda svc, vid=video_id: svc.search().list(
+                    relatedToVideoId=vid,
+                    type="video",
+                    part="snippet",
+                    maxResults=max_related,
+                ))
+            except HttpError as e:
+                # relatedToVideoId may be deprecated — log and skip gracefully
+                log.warning("get_related_channels — relatedToVideoId failed for %s: %s", video_id, e)
+                continue
+            for item in response.get("items", []):
+                ch_id = item.get("snippet", {}).get("channelId")
+                if ch_id and ch_id != seed_channel_id:
+                    related_channel_ids.add(ch_id)
+
+        return list(related_channel_ids)
+
     def _compute_upload_frequency(self, dates: list[str]) -> float:
         """Compute mean days between uploads from ISO8601 date strings."""
         if len(dates) < 2:

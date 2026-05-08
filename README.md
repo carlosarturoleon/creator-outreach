@@ -20,10 +20,20 @@ There are two ways to use this project:
 
 ### A. Full pipeline (find new channels from scratch)
 
-Runs everything end-to-end: search YouTube → enrich → filter → score → generate emails.
+Runs everything end-to-end: search YouTube → discover via video search & related channels → enrich → filter → score → generate emails.
 
 ```bash
-python main.py --keywords "marketing attribution" "google analytics" --min-subscribers 5000
+# Default run (uses keywords.txt)
+python main.py --min-subscribers 5000
+
+# Use a second keyword file on top of the default
+python main.py --keywords-file2 keywords2.txt
+
+# Wider subscriber range (recommended when the default pool is exhausted)
+python main.py --max-subscribers 500000
+
+# Control quota cost of related-channel traversal (default: 10 seed channels)
+python main.py --max-seed-channels 20
 ```
 
 ### B. Manual workflow (the one you actually use)
@@ -203,10 +213,21 @@ The `selected` flag in the DB is a legacy score-threshold marker and is not used
 ## Architecture
 
 ```
-search_channels → deduplicate_vs_db → enrich_channel_data → filter_influencers
-                                                                    ↓
-                                                    score_influencers → generate_emails → save_results
+search_channels ──┐
+                  ├→ discover_channels → deduplicate_vs_db → enrich_channel_data → filter_influencers
+                  ┘                                                                        ↓
+                                                                           score_influencers → generate_emails → save_results
 ```
+
+**Discovery modes:**
+- `search_channels` — keyword → channel search (`search.list(type="channel")`)
+- `discover_channels` — two supplementary passes:
+  - **Video search**: `search.list(type="video")` per keyword — surfaces niche creators not ranked in channel search
+  - **Related traversal**: fetches channels related to top-scored DB channels via `relatedToVideoId`
+
+**Keyword files:**
+- `keywords.txt` — primary keyword list (Tier 1–5, multi-language, competitor angles)
+- `keywords2.txt` — affiliate-minded expansion (agency reporting, integration tutorials, LinkedIn/Amazon/Pinterest Ads)
 
 Key files:
 - `src/state.py` — GraphState TypedDict

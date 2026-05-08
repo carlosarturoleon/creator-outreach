@@ -1,0 +1,88 @@
+# keywords2.txt — Affiliate-Minded Creator Discovery
+# One keyword per line. Lines starting with # are ignored.
+# Strategy: find creators who already demo/recommend tools and join affiliate programs
+# Target: tutorial creators, agency/freelancers, underserved ad platform niches
+
+# ─── AGENCY & FREELANCER REPORTING ───────────────────────────────────────────
+client reporting dashboard tutorial
+marketing agency reporting tools
+white label marketing dashboard
+automate client reports
+agency google analytics reporting
+freelance digital marketing tools
+marketing reporting for clients
+client dashboard google data studio
+agency reporting automation
+marketing consultant tools
+reporting automation for agencies
+client seo reporting dashboard
+ppc agency dashboard tutorial
+google analytics agency reporting
+automated marketing reports google sheets
+
+# ─── INTEGRATION TUTORIAL CREATORS ──────────────────────────────────────────
+how to connect google ads to sheets
+automate marketing data tutorial
+google ads api for beginners
+facebook ads data automation
+marketing data pipeline tutorial
+connect all marketing platforms
+marketing data warehouse tutorial
+no code marketing automation
+zapier marketing analytics
+make.com marketing automation tutorial
+google apps script marketing
+python for marketing data
+pull facebook ads data automatically
+export tiktok ads data to sheets
+connect linkedin ads to google sheets
+combine ad platform data tutorial
+marketing data to bigquery tutorial
+google ads scripts tutorial
+facebook ads reporting automation
+
+# ─── LINKEDIN ADS ────────────────────────────────────────────────────────────
+linkedin ads tutorial for beginners
+linkedin ads conversion tracking
+linkedin campaign manager tutorial
+linkedin ads for b2b saas
+linkedin ads analytics setup
+linkedin ads optimization tutorial
+linkedin lead gen forms tutorial
+linkedin ads reporting dashboard
+linkedin ads vs google ads
+linkedin ads targeting tutorial
+
+# ─── AMAZON ADS ──────────────────────────────────────────────────────────────
+amazon ads tutorial for beginners
+amazon advertising tutorial
+amazon ppc tutorial
+amazon sponsored products tutorial
+amazon dsp tutorial
+amazon attribution tutorial
+amazon seller advertising setup
+amazon ads analytics
+amazon ads reporting dashboard
+amazon ads optimization tutorial
+
+# ─── PINTEREST ADS ───────────────────────────────────────────────────────────
+pinterest ads tutorial for beginners
+pinterest ads for ecommerce
+pinterest ads conversion tracking
+pinterest tag setup
+pinterest analytics tutorial
+
+# ─── SNAPCHAT ADS ────────────────────────────────────────────────────────────
+snapchat ads tutorial for beginners
+snapchat pixel setup tutorial
+snapchat ads for ecommerce
+
+# ─── MULTI-PLATFORM ATTRIBUTION ──────────────────────────────────────────────
+how to track all marketing channels
+marketing attribution for small business
+multi platform ad tracking tutorial
+unified marketing dashboard tutorial
+combine google facebook tiktok ads data
+track roi across all ad platforms
+ad spend reporting all platforms
+marketing reporting for ecommerce stores

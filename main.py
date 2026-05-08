@@ -70,11 +70,25 @@ def main() -> None:
         help="Target languages (ISO 639-1 codes)",
     )
     parser.add_argument(
+        "--keywords-file2",
+        type=Path,
+        default=None,
+        dest="keywords_file2",
+        help="Optional second keywords file to append (one keyword per line, # = comment)",
+    )
+    parser.add_argument(
         "--max-results",
         type=int,
         default=20,
         dest="max_results",
         help="Max channel results per keyword",
+    )
+    parser.add_argument(
+        "--max-seed-channels",
+        type=int,
+        default=10,
+        dest="max_seed_channels",
+        help="Max seed channels to use for related-channel traversal in discover_channels",
     )
     parser.add_argument(
         "--stop-after-filter",
@@ -97,6 +111,12 @@ def main() -> None:
     else:
         print(f"Error: no --keywords given and {args.keywords_file} not found.")
         sys.exit(1)
+    if args.keywords_file2 and args.keywords_file2.exists():
+        lines2 = args.keywords_file2.read_text().splitlines()
+        extra = [l.strip() for l in lines2 if l.strip() and not l.strip().startswith("#")]
+        if extra:
+            keywords = list(dict.fromkeys(keywords + extra))  # append, dedup, preserve order
+            print(f"Loaded {len(extra)} additional keywords from {args.keywords_file2} (total: {len(keywords)})")
     if args.min_subscribers < 0:
         print("Error: --min-subscribers must be >= 0.")
         sys.exit(1)
@@ -126,6 +146,7 @@ def main() -> None:
     log.info("Min engagement:  %s%%", args.min_engagement)
     log.info("Languages:       %s", args.languages)
     log.info("Max results:     %s per keyword", args.max_results)
+    log.info("Max seed chans:  %s (related traversal)", args.max_seed_channels)
     if args.stop_after_filter:
         log.info("Mode: PREVIEW (stops after filter)")
 
@@ -149,6 +170,7 @@ def main() -> None:
         "min_engagement_rate": args.min_engagement,
         "target_languages": args.languages,
         "max_results_per_keyword": args.max_results,
+        "max_seed_channels": args.max_seed_channels,
         "stop_after_filter": args.stop_after_filter,
         "run_id": run_id,
         # All Annotated[list] fields must be initialized to [] for operator.add

@@ -11,6 +11,7 @@ class GraphState(TypedDict):
     min_engagement_rate: float
     target_languages: list[str]
     max_results_per_keyword: int
+    max_seed_channels: int  # max seed channels for related-channel traversal
 
     # --- Pipeline data (operator.add = safe append, enables future parallelism) ---
     raw_channels: Annotated[list[dict], operator.add]
