@@ -13,9 +13,11 @@ import csv
 import json
 import os
 import sqlite3
+from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "output", "influencers.db")
-CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "output", "channels_export.csv")
+_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "output", f"channels_export_{_ts}.csv")
 
 
 def parse_json_list(value: str, limit: int = None) -> str:

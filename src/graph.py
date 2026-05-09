@@ -101,3 +101,31 @@ def build_graph():
     builder.add_edge("save_results", END)
 
     return builder.compile()
+
+
+def build_from_db_graph():
+    """Minimal graph that starts at filter_influencers, skipping all API steps.
+    Used with --from-db to process channels already stored in SQLite.
+    """
+    builder = StateGraph(GraphState)
+
+    builder.add_node("filter_influencers", filter_influencers)
+    builder.add_node("score_influencers", score_influencers)
+    builder.add_node("llm_score_influencers", llm_score_influencers)
+    builder.add_node("scrape_contact_emails", scrape_contact_emails)
+    builder.add_node("generate_emails", generate_emails)
+    builder.add_node("save_results", save_results)
+
+    builder.add_edge(START, "filter_influencers")
+    builder.add_conditional_edges(
+        "filter_influencers",
+        _route_after_filter,
+        {"score_influencers": "score_influencers", "__end__": END},
+    )
+    builder.add_edge("score_influencers", "llm_score_influencers")
+    builder.add_edge("llm_score_influencers", "scrape_contact_emails")
+    builder.add_edge("scrape_contact_emails", "generate_emails")
+    builder.add_edge("generate_emails", "save_results")
+    builder.add_edge("save_results", END)
+
+    return builder.compile()

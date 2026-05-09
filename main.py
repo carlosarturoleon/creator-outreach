@@ -5,7 +5,7 @@ from pathlib import Path
 
 from src.config import settings
 from src.db.database import Database
-from src.graph import build_graph
+from src.graph import build_graph, build_from_db_graph
 from src.logger import attach_db_handler, get_logger
 
 
@@ -45,7 +45,7 @@ def main() -> None:
     parser.add_argument(
         "--min-subscribers",
         type=int,
-        default=5000,
+        default=1000,
         dest="min_subscribers",
         help="Minimum subscriber count",
     )
@@ -96,34 +96,53 @@ def main() -> None:
         dest="stop_after_filter",
         help="Stop after filtering. Print results without scoring or email generation.",
     )
+    parser.add_argument(
+        "--from-db",
+        action="store_true",
+        dest="from_db",
+        help=(
+            "Skip search/discover/enrich. Load channels already in the DB and "
+            "run filter → score → generate emails on them."
+        ),
+    )
+    parser.add_argument(
+        "--since-date",
+        type=str,
+        default=None,
+        dest="since_date",
+        help="With --from-db: only load channels last updated on or after this date (YYYY-MM-DD). "
+             "Defaults to today.",
+    )
     args = parser.parse_args()
 
-    # --- Resolve keywords (--keywords takes priority over --keywords-file) ---
-    if args.keywords:
-        keywords = args.keywords
-    elif args.keywords_file.exists():
-        lines = args.keywords_file.read_text().splitlines()
-        keywords = [l.strip() for l in lines if l.strip() and not l.strip().startswith("#")]
-        if not keywords:
-            print(f"Error: {args.keywords_file} contains no keywords.")
+    # --- Resolve keywords (not required for --from-db) ---
+    keywords = []
+    if not args.from_db:
+        if args.keywords:
+            keywords = args.keywords
+        elif args.keywords_file.exists():
+            lines = args.keywords_file.read_text().splitlines()
+            keywords = [l.strip() for l in lines if l.strip() and not l.strip().startswith("#")]
+            if not keywords:
+                print(f"Error: {args.keywords_file} contains no keywords.")
+                sys.exit(1)
+            print(f"Loaded {len(keywords)} keywords from {args.keywords_file}")
+        else:
+            print(f"Error: no --keywords given and {args.keywords_file} not found.")
             sys.exit(1)
-        print(f"Loaded {len(keywords)} keywords from {args.keywords_file}")
-    else:
-        print(f"Error: no --keywords given and {args.keywords_file} not found.")
-        sys.exit(1)
-    if args.keywords_file2 and args.keywords_file2.exists():
-        lines2 = args.keywords_file2.read_text().splitlines()
-        extra = [l.strip() for l in lines2 if l.strip() and not l.strip().startswith("#")]
-        if extra:
-            keywords = list(dict.fromkeys(keywords + extra))  # append, dedup, preserve order
-            print(f"Loaded {len(extra)} additional keywords from {args.keywords_file2} (total: {len(keywords)})")
+        if args.keywords_file2 and args.keywords_file2.exists():
+            lines2 = args.keywords_file2.read_text().splitlines()
+            extra = [l.strip() for l in lines2 if l.strip() and not l.strip().startswith("#")]
+            if extra:
+                keywords = list(dict.fromkeys(keywords + extra))
+                print(f"Loaded {len(extra)} additional keywords from {args.keywords_file2} (total: {len(keywords)})")
     if args.min_subscribers < 0:
         print("Error: --min-subscribers must be >= 0.")
         sys.exit(1)
     if args.min_engagement < 0:
         print("Error: --min-engagement must be >= 0.")
         sys.exit(1)
-    if args.max_results < 1 or args.max_results > 50:
+    if not args.from_db and (args.max_results < 1 or args.max_results > 50):
         print("Error: --max-results must be between 1 and 50 (YouTube API limit).")
         sys.exit(1)
 
@@ -140,51 +159,84 @@ def main() -> None:
     log = get_logger(__name__)
 
     log.info("Run ID: %s", run_id)
-    log.info("Keywords:        %s", keywords)
     log.info("Min subscribers: %s", f"{args.min_subscribers:,}")
     log.info("Max subscribers: %s", f"{args.max_subscribers:,}" if args.max_subscribers else "no cap")
     log.info("Min engagement:  %s%%", args.min_engagement)
     log.info("Languages:       %s", args.languages)
-    log.info("Max results:     %s per keyword", args.max_results)
-    log.info("Max seed chans:  %s (related traversal)", args.max_seed_channels)
+    if args.from_db:
+        log.info("Mode: FROM-DB (filter/score/email on existing DB channels)")
+    else:
+        log.info("Keywords:        %s", keywords)
+        log.info("Max results:     %s per keyword", args.max_results)
+        log.info("Max seed chans:  %s (related traversal)", args.max_seed_channels)
     if args.stop_after_filter:
         log.info("Mode: PREVIEW (stops after filter)")
 
     print(f"\nWindsor.ai Influencer Finder  [run_id: {run_id}]")
-    print(f"Keywords:        {keywords}")
     print(f"Min subscribers: {args.min_subscribers:,}")
     print(f"Max subscribers: {args.max_subscribers:,}" if args.max_subscribers else "Max subscribers: no cap")
     print(f"Min engagement:  {args.min_engagement}%")
     print(f"Languages:       {args.languages}")
-    print(f"Max results:     {args.max_results} per keyword")
+    if args.from_db:
+        print("Mode:            FROM-DB (filter/score/email on existing DB channels)")
+    else:
+        print(f"Keywords:        {keywords}")
+        print(f"Max results:     {args.max_results} per keyword")
     if args.stop_after_filter:
         print("Mode:            PREVIEW (stops after filter — no LLM scoring or emails)")
     print()
 
-    graph = build_graph()
-
-    initial_state = {
-        "search_keywords": keywords,
-        "min_subscribers": args.min_subscribers,
-        "max_subscribers": args.max_subscribers,
-        "min_engagement_rate": args.min_engagement,
-        "target_languages": args.languages,
-        "max_results_per_keyword": args.max_results,
-        "max_seed_channels": args.max_seed_channels,
-        "stop_after_filter": args.stop_after_filter,
-        "run_id": run_id,
-        # All Annotated[list] fields must be initialized to [] for operator.add
-        "raw_channels": [],
-        "deduped_channels": [],
-        "pre_filtered_channels": [],
-        "enriched_channels": [],
-        "filtered_channels": [],
-        "scored_influencers": [],
-        "outreach_emails": [],
-        "error_log": [],
-        "skipped_channel_ids": [],
-        "current_phase": "initializing",
-    }
+    if args.from_db:
+        import datetime
+        since = args.since_date or datetime.date.today().isoformat()
+        graph = build_from_db_graph()
+        all_channels = db.get_all_channels(since_date=since)
+        log.info("--from-db: loaded %d channels updated since %s", len(all_channels), since)
+        print(f"Loaded {len(all_channels):,} channels updated since {since}")
+        initial_state = {
+            "search_keywords": [],
+            "min_subscribers": args.min_subscribers,
+            "max_subscribers": args.max_subscribers,
+            "min_engagement_rate": args.min_engagement,
+            "target_languages": args.languages,
+            "max_results_per_keyword": args.max_results,
+            "max_seed_channels": args.max_seed_channels,
+            "stop_after_filter": args.stop_after_filter,
+            "run_id": run_id,
+            "raw_channels": [],
+            "deduped_channels": [],
+            "pre_filtered_channels": [],
+            "enriched_channels": all_channels,
+            "filtered_channels": [],
+            "scored_influencers": [],
+            "outreach_emails": [],
+            "error_log": [],
+            "skipped_channel_ids": [],
+            "current_phase": "enrichment_complete",
+        }
+    else:
+        graph = build_graph()
+        initial_state = {
+            "search_keywords": keywords,
+            "min_subscribers": args.min_subscribers,
+            "max_subscribers": args.max_subscribers,
+            "min_engagement_rate": args.min_engagement,
+            "target_languages": args.languages,
+            "max_results_per_keyword": args.max_results,
+            "max_seed_channels": args.max_seed_channels,
+            "stop_after_filter": args.stop_after_filter,
+            "run_id": run_id,
+            "raw_channels": [],
+            "deduped_channels": [],
+            "pre_filtered_channels": [],
+            "enriched_channels": [],
+            "filtered_channels": [],
+            "scored_influencers": [],
+            "outreach_emails": [],
+            "error_log": [],
+            "skipped_channel_ids": [],
+            "current_phase": "initializing",
+        }
 
     try:
         final_state = graph.invoke(initial_state)

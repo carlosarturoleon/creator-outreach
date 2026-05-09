@@ -11,6 +11,10 @@ log = get_logger(__name__)
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
+class QuotaExhaustedError(Exception):
+    """Raised when all YouTube API keys have exhausted their daily quota."""
+
+
 def _is_quota_error(e: HttpError) -> bool:
     if e.resp.status != 403:
         return False
@@ -75,8 +79,10 @@ class YouTubeClient:
             try:
                 return _execute_with_backoff(request_fn(self.service))
             except HttpError as e:
-                if _is_quota_error(e) and self._rotate_key():
-                    continue  # retry with new key
+                if _is_quota_error(e):
+                    if self._rotate_key():
+                        continue  # retry with new key
+                    raise QuotaExhaustedError("All YouTube API keys have exhausted their quota") from e
                 raise
 
     def search_channels(self, keyword: str, max_results: int = 20) -> list[dict]:

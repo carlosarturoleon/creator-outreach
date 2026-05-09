@@ -200,20 +200,42 @@ class Database:
                 if "contact_email" not in cols:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN contact_email TEXT")
 
-    def get_cached_channels(self, channel_ids: list[str], max_age_days: int = 7) -> dict[str, dict]:
-        """Return enriched channel rows from DB that were updated within max_age_days.
-        Key is channel_id. Only channels with a non-NULL last_updated_at are returned.
+    def get_all_channels(self, since_date: str | None = None) -> list[dict]:
+        """Return enriched channel rows from the DB as a list of dicts.
+        If since_date (ISO date string, e.g. '2026-05-08') is given, only return
+        channels last updated on or after that date.
+        """
+        with self._connect() as conn:
+            if since_date:
+                rows = conn.execute(
+                    "SELECT * FROM channels WHERE date(last_updated_at) >= ?", (since_date,)
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM channels").fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            for col in ("keywords", "recent_video_titles"):
+                try:
+                    d[col] = json.loads(d[col]) if d[col] else []
+                except (ValueError, TypeError):
+                    d[col] = []
+            result.append(d)
+        return result
+
+    def get_cached_channels(self, channel_ids: list[str]) -> dict[str, dict]:
+        """Return enriched channel rows from DB for the given channel_ids.
+        Only channels with subscriber_count > 0 (i.e. fully enriched) are returned.
+        Key is channel_id.
         """
         if not channel_ids:
             return {}
-        from datetime import timedelta
-        cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
         placeholders = ",".join("?" * len(channel_ids))
         with self._connect() as conn:
             rows = conn.execute(
                 f"SELECT * FROM channels WHERE channel_id IN ({placeholders})"
-                f" AND last_updated_at >= ? AND subscriber_count > 0",
-                (*channel_ids, cutoff),
+                f" AND subscriber_count > 0",
+                channel_ids,
             ).fetchall()
         result = {}
         for row in rows:

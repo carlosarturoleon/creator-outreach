@@ -2,13 +2,12 @@ import re
 
 from src.logger import get_logger
 from src.state import GraphState
-from src.tools.youtube_client import YouTubeClient
+from src.tools.youtube_client import YouTubeClient, QuotaExhaustedError
 from src.db.database import Database
 from src.config import settings
 
 log = get_logger(__name__)
 
-_ENRICH_CACHE_DAYS = 7  # reuse DB stats if updated within this many days
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 
 
@@ -40,7 +39,7 @@ def enrich_channel_data(state: GraphState) -> dict:
 
     # --- Cache lookup: which channels have fresh data already? ---
     all_ids = [ch["channel_id"] for ch in channels]
-    cached_map = db.get_cached_channels(all_ids, max_age_days=_ENRICH_CACHE_DAYS)
+    cached_map = db.get_cached_channels(all_ids)
 
     fresh: list[dict] = []   # served from DB cache
     stale: list[dict] = []   # need YouTube API call
@@ -75,6 +74,12 @@ def enrich_channel_data(state: GraphState) -> dict:
         try:
             stats_list = client.get_channel_stats(stale_ids)
             log.info("  Phase A: received stats for %d channels", len(stats_list))
+        except QuotaExhaustedError as e:
+            log.error("  Phase A: quota exhausted — skipping all video stats too: %s", e)
+            errors.append(f"[enrich] Quota exhausted in Phase A: {e}")
+            stats_list = []
+            # Mark quota exhausted so Phase B is skipped entirely
+            stale = []
         except Exception as e:
             log.error("  Phase A: batch stats failed: %s", e)
             errors.append(f"[enrich] Batch stats failed: {e}")
@@ -83,24 +88,33 @@ def enrich_channel_data(state: GraphState) -> dict:
         stats_map: dict[str, dict] = {s["channel_id"]: s for s in stats_list}
 
         # Phase B: per-channel video engagement for stale channels only
+        quota_exhausted = False
         for i, ch in enumerate(stale, 1):
             cid = ch["channel_id"]
             title = ch.get("channel_title", cid)
             stats = stats_map.get(cid, {})
             log.info("  Phase B [%d/%d] %s (%s)", i, len(stale), title, cid)
 
-            try:
-                video_stats = client.get_channel_video_stats(
-                    channel_id=cid,
-                    max_videos=settings.max_videos_to_sample,
-                )
-                log.debug("    engagement=%.2f%%, subscribers=%s",
-                          video_stats.get("engagement_rate", 0),
-                          stats.get("subscriber_count", "?"))
-            except Exception as e:
-                log.warning("    Video stats failed for %s: %s", cid, e)
-                errors.append(f"[enrich] Video stats failed for {cid}: {e}")
+            if quota_exhausted:
                 video_stats = client._empty_video_stats()
+            else:
+                try:
+                    video_stats = client.get_channel_video_stats(
+                        channel_id=cid,
+                        max_videos=settings.max_videos_to_sample,
+                    )
+                    log.debug("    engagement=%.2f%%, subscribers=%s",
+                              video_stats.get("engagement_rate", 0),
+                              stats.get("subscriber_count", "?"))
+                except QuotaExhaustedError as e:
+                    log.warning("  Phase B: quota exhausted at channel %d/%d — skipping remaining video stats", i, len(stale))
+                    errors.append(f"[enrich] Quota exhausted at Phase B channel {i}/{len(stale)}: {e}")
+                    quota_exhausted = True
+                    video_stats = client._empty_video_stats()
+                except Exception as e:
+                    log.warning("    Video stats failed for %s: %s", cid, e)
+                    errors.append(f"[enrich] Video stats failed for {cid}: {e}")
+                    video_stats = client._empty_video_stats()
 
             enriched_ch = {**ch, **stats, **video_stats}
 
