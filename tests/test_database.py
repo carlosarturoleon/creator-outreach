@@ -53,7 +53,7 @@ def _score_data(channel_id="UC_test_001"):
 
 def test_upsert_and_retrieve_channel(db):
     db.upsert_channel(_channel_data())
-    cached = db.get_cached_channels(["UC_test_001"], max_age_days=7)
+    cached = db.get_cached_channels(["UC_test_001"])
     assert "UC_test_001" in cached
     assert cached["UC_test_001"]["channel_title"] == "Analytics Pro"
 
@@ -72,9 +72,9 @@ def test_upsert_preserves_first_seen_at(db):
     assert after["channel_title"] == "Updated Title"
 
 
-def test_get_cached_channels_max_age_filters_old_records(db):
+def test_get_cached_channels_returns_old_records(db):
+    """Cache is permanent — old last_updated_at should still be returned."""
     db.upsert_channel(_channel_data())
-    # Manually backdate last_updated_at to 10 days ago
     conn = sqlite3.connect(db.db_path)
     conn.execute(
         "UPDATE channels SET last_updated_at = '2020-01-01T00:00:00+00:00' WHERE channel_id = ?",
@@ -83,8 +83,8 @@ def test_get_cached_channels_max_age_filters_old_records(db):
     conn.commit()
     conn.close()
 
-    cached = db.get_cached_channels(["UC_test_001"], max_age_days=1)
-    assert "UC_test_001" not in cached
+    cached = db.get_cached_channels(["UC_test_001"])
+    assert "UC_test_001" in cached  # permanent cache — never expires
 
 
 def test_get_cached_channels_deserializes_json_columns(db):

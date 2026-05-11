@@ -40,7 +40,14 @@ def generate_emails(state: GraphState) -> dict:
     enriched_map: dict[str, dict] = {
         ch["channel_id"]: ch for ch in source_channels
     }
-    influencers = state.get("scored_influencers", [])
+    # Deduplicate by channel_id — scored_influencers uses operator.add and can contain dupes
+    seen: set[str] = set()
+    influencers = []
+    for inf in state.get("scored_influencers", []):
+        cid = inf.get("channel_id")
+        if cid not in seen:
+            seen.add(cid)
+            influencers.append(inf)
 
     if not influencers:
         log.info("generate_emails — no influencers to email, skipping")

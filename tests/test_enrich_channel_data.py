@@ -60,8 +60,8 @@ def _api_video_stats():
     }
 
 
-def _state(channels):
-    return {"pre_filtered_channels": channels}
+def _state(channels, force_reenrich=False):
+    return {"pre_filtered_channels": channels, "force_reenrich": force_reenrich}
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +225,61 @@ def test_return_keys(MockDB, MockYT):
     result = enrich_channel_data(_state([]))
     assert "enriched_channels" in result
     assert "error_log" in result
+    assert "quota_units_spent" in result
     assert "current_phase" in result
+
+
+@patch("src.nodes.enrich_channel_data.YouTubeClient")
+@patch("src.nodes.enrich_channel_data.Database")
+def test_force_reenrich_bypasses_cache(MockDB, MockYT):
+    """With force_reenrich=True, cached channels are re-fetched from the API."""
+    mock_db = MagicMock()
+    mock_db.get_cached_channels.return_value = {"UC_001": _cached_db_row()}
+    MockDB.return_value = mock_db
+
+    mock_yt = MagicMock()
+    mock_yt.get_channel_stats.return_value = [_api_channel_stats()]
+    mock_yt.get_channel_video_stats.return_value = _api_video_stats()
+    MockYT.return_value = mock_yt
+
+    result = enrich_channel_data(_state([_minimal_channel()], force_reenrich=True))
+
+    # Cache was not consulted (get_cached_channels still called for IDs, but result ignored)
+    mock_yt.get_channel_stats.assert_called_once()
+    mock_yt.get_channel_video_stats.assert_called_once()
+    assert len(result["enriched_channels"]) == 1
+
+
+@patch("src.nodes.enrich_channel_data.YouTubeClient")
+@patch("src.nodes.enrich_channel_data.Database")
+def test_quota_units_spent_increases_with_api_calls(MockDB, MockYT):
+    """quota_units_spent should reflect Phase A + Phase B costs."""
+    mock_db = MagicMock()
+    mock_db.get_cached_channels.return_value = {}
+    MockDB.return_value = mock_db
+
+    mock_yt = MagicMock()
+    mock_yt.get_channel_stats.return_value = [_api_channel_stats()]
+    mock_yt.get_channel_video_stats.return_value = _api_video_stats()
+    MockYT.return_value = mock_yt
+
+    result = enrich_channel_data(_state([_minimal_channel()]))
+
+    # 1 channel: ceil(1/50)=1 unit Phase A + 3 units Phase B = 4
+    assert result["quota_units_spent"] == 4
+
+
+@patch("src.nodes.enrich_channel_data.YouTubeClient")
+@patch("src.nodes.enrich_channel_data.Database")
+def test_quota_units_zero_when_all_cached(MockDB, MockYT):
+    """No quota spent when all channels are served from cache."""
+    mock_db = MagicMock()
+    mock_db.get_cached_channels.return_value = {"UC_001": _cached_db_row()}
+    MockDB.return_value = mock_db
+
+    result = enrich_channel_data(_state([_minimal_channel()]))
+
+    assert result["quota_units_spent"] == 0
 
 
 @patch("src.nodes.enrich_channel_data.YouTubeClient")

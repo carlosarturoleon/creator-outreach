@@ -105,6 +105,12 @@ class Database:
                     email TEXT PRIMARY KEY,
                     imported_at TEXT DEFAULT (datetime('now'))
                 );
+
+                CREATE TABLE IF NOT EXISTS daily_quota (
+                    date TEXT NOT NULL,
+                    quota_spent INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (date)
+                );
             """)
 
     def migrate_scoring_v2(self) -> None:
@@ -200,6 +206,44 @@ class Database:
                 if "contact_email" not in cols:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN contact_email TEXT")
 
+    def migrate_add_daily_quota(self) -> None:
+        """Create daily_quota table if not present (safe to run repeatedly)."""
+        with self._connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS daily_quota (
+                    date TEXT NOT NULL,
+                    quota_spent INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (date)
+                )
+            """)
+
+    def migrate_add_quota_to_runs(self) -> None:
+        """Add quota_units_spent column to runs table if not present."""
+        with self._connect() as conn:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(runs)").fetchall()]
+            if "quota_units_spent" not in cols:
+                conn.execute("ALTER TABLE runs ADD COLUMN quota_units_spent INTEGER DEFAULT 0")
+
+    def get_quota_spent_today(self) -> int:
+        """Return total quota units spent today (all API keys pooled)."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT quota_spent FROM daily_quota WHERE date = ?", (today,)
+            ).fetchone()
+        return row["quota_spent"] if row else 0
+
+    def add_quota_spent(self, units: int) -> None:
+        """Add units to today's quota tally (upsert). Thread-safe via SQLite transactions."""
+        if units <= 0:
+            return
+        today = datetime.now().strftime("%Y-%m-%d")
+        with self._connect() as conn:
+            conn.execute("""
+                INSERT INTO daily_quota (date, quota_spent) VALUES (?, ?)
+                ON CONFLICT(date) DO UPDATE SET quota_spent = quota_spent + excluded.quota_spent
+            """, (today, units))
+
     def get_all_channels(self, since_date: str | None = None) -> list[dict]:
         """Return enriched channel rows from the DB as a list of dicts.
         If since_date (ISO date string, e.g. '2026-05-08') is given, only return
@@ -223,10 +267,29 @@ class Database:
             result.append(d)
         return result
 
+    def get_stub_channels(self) -> list[dict]:
+        """Return channels saved to DB but not yet enriched (subscriber_count = 0 or NULL).
+        These are stubs left over from previous runs that were cut short by quota exhaustion.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM channels WHERE subscriber_count IS NULL OR subscriber_count = 0"
+            ).fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            for col in ("keywords", "recent_video_titles"):
+                try:
+                    d[col] = json.loads(d[col]) if d[col] else []
+                except (ValueError, TypeError):
+                    d[col] = []
+            result.append(d)
+        return result
+
     def get_cached_channels(self, channel_ids: list[str]) -> dict[str, dict]:
         """Return enriched channel rows from DB for the given channel_ids.
-        Only channels with subscriber_count > 0 (i.e. fully enriched) are returned.
-        Key is channel_id.
+        Only channels with subscriber_count > 0 (i.e. previously enriched) are
+        returned. These are served from cache permanently — no TTL. Key is channel_id.
         """
         if not channel_ids:
             return {}
@@ -431,6 +494,7 @@ class Database:
                     total_scored = ?,
                     total_emailed = ?,
                     error_count = ?,
+                    quota_units_spent = ?,
                     status = ?
                 WHERE run_id = ?
             """, (
@@ -443,6 +507,7 @@ class Database:
                 stats.get("total_scored", 0),
                 stats.get("total_emailed", 0),
                 stats.get("error_count", 0),
+                stats.get("quota_units_spent", 0),
                 status,
                 run_id,
             ))

@@ -32,7 +32,7 @@ def llm_score_influencers(state: GraphState) -> dict:
     Drops channels with llm_score < LLM_SCORE_FLOOR.
     Sorts: primary=llm_score desc, secondary=composite_score desc.
     """
-    influencers = state.get("scored_influencers", [])
+    influencers = state.get("pre_llm_influencers", [])
     enriched_map: dict[str, dict] = {
         ch["channel_id"]: ch for ch in state.get("enriched_channels", [])
     }

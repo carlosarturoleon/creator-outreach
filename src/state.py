@@ -12,6 +12,8 @@ class GraphState(TypedDict):
     target_languages: list[str]
     max_results_per_keyword: int
     max_seed_channels: int  # max seed channels for related-channel traversal
+    quota_budget: int       # max units to spend before skipping discover_channels (default 8000)
+    force_reenrich: bool    # bypass enrichment cache and re-fetch all stats from YouTube
 
     # --- Pipeline data (operator.add = safe append, enables future parallelism) ---
     raw_channels: Annotated[list[dict], operator.add]
@@ -25,6 +27,7 @@ class GraphState(TypedDict):
     # --- Control / audit ---
     error_log: Annotated[list[str], operator.add]
     skipped_channel_ids: Annotated[list[str], operator.add]
+    quota_units_spent: Annotated[int, operator.add]  # accumulates across nodes
     current_phase: str
     stop_after_filter: bool
     run_id: str
@@ -32,3 +35,6 @@ class GraphState(TypedDict):
     pre_filtered_channels: list[dict]
     # Plain overwrite: set by scrape_contact_emails, read by filter_influencers
     scraped_channels: list[dict]
+    # Plain overwrite: set by score_influencers, read by llm_score_influencers
+    # (avoids operator.add double-counting when both nodes write to scored_influencers)
+    pre_llm_influencers: list[dict]

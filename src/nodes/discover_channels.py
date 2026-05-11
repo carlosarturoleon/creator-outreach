@@ -5,7 +5,7 @@ from googleapiclient.errors import HttpError
 from src.db.database import Database
 from src.logger import get_logger
 from src.state import GraphState
-from src.tools.youtube_client import YouTubeClient
+from src.tools.youtube_client import QuotaExhaustedError, YouTubeClient
 
 log = get_logger(__name__)
 
@@ -29,12 +29,25 @@ def discover_channels(state: GraphState) -> dict:
     max_results = state.get("max_results_per_keyword", 20)
     max_seed_channels = state.get("max_seed_channels", 10)
 
+    # Quota budget gate — skip discovery if we're already over budget
+    quota_spent = state.get("quota_units_spent", 0)
+    quota_budget = state.get("quota_budget", 8000)
+    if quota_spent >= quota_budget:
+        log.warning(
+            "discover_channels — quota budget reached (%d/%d units spent), skipping discovery",
+            quota_spent, quota_budget,
+        )
+        return {"raw_channels": [], "quota_units_spent": 0, "current_phase": "discovery_skipped"}
+
+    log.info("discover_channels — quota budget: %d/%d units used so far", quota_spent, quota_budget)
+
     client = YouTubeClient()
     db = Database()
 
     # Track all channel IDs already seen in this node (across both parts)
     seen_ids: set[str] = set()
     new_channels: list[dict] = []
+    quota_units = 0
 
     # ── Part A: Video-level keyword search ────────────────────────────────────
     log.info("discover_channels Part A — video search, %d keywords", len(keywords))
@@ -53,11 +66,12 @@ def discover_channels(state: GraphState) -> dict:
                     db.upsert_channel(ch, touch_last_updated=False)
                 except Exception as db_err:
                     log.warning("  DB save failed for %s: %s", cid, db_err)
+            quota_units += 100
             log.info("  [%d/%d] video search %r → %d new channels", i, len(keywords), keyword, added)
+        except QuotaExhaustedError:
+            log.error("  YouTube quota exhausted — stopping Part A early")
+            break
         except HttpError as e:
-            if e.resp.status == 403 and "quota" in str(e).lower():
-                log.error("  YouTube quota exhausted during video search — stopping Part A early")
-                break
             log.error("  [%d/%d] video search error for %r: %s", i, len(keywords), keyword, e)
         except Exception as e:
             log.error("  [%d/%d] video search error for %r: %s", i, len(keywords), keyword, e)
@@ -107,19 +121,21 @@ def discover_channels(state: GraphState) -> dict:
                 except Exception as db_err:
                     log.warning("  DB save failed for related channel %s: %s", cid, db_err)
             part_b_count += added
+            quota_units += 302  # ~1 (channels.list) + 1 (playlistItems) + 100×3 (search per video)
             log.info("  Seed %s → %d related channels", seed_id, added)
+        except QuotaExhaustedError:
+            log.error("  YouTube quota exhausted — stopping Part B early")
+            break
         except HttpError as e:
-            if e.resp.status == 403 and "quota" in str(e).lower():
-                log.error("  YouTube quota exhausted during related traversal — stopping Part B early")
-                break
             log.error("  Related traversal error for seed %s: %s", seed_id, e)
         except Exception as e:
             log.error("  Related traversal error for seed %s: %s", seed_id, e)
 
     log.info("discover_channels Part B DONE — %d channels found via related traversal", part_b_count)
-    log.info("discover_channels DONE — %d total new channels discovered", len(new_channels))
+    log.info("discover_channels DONE — %d total new channels discovered, ~%d quota units spent", len(new_channels), quota_units)
 
     return {
         "raw_channels": new_channels,
+        "quota_units_spent": quota_units,
         "current_phase": "discovery_complete",
     }

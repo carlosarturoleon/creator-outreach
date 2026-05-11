@@ -25,7 +25,7 @@ def _is_quota_error(e: HttpError) -> bool:
 
 
 def _execute_with_backoff(request, max_retries: int = 5):
-    """Execute a YouTube API request with exponential backoff on quota/server errors."""
+    """Execute a YouTube API request with exponential backoff on transient server errors."""
     delay = 1.0
     for attempt in range(max_retries):
         try:
@@ -33,14 +33,7 @@ def _execute_with_backoff(request, max_retries: int = 5):
         except HttpError as e:
             status = e.resp.status
             if status == 403:
-                if _is_quota_error(e):
-                    if attempt < max_retries - 1:
-                        log.warning("YouTube quota exceeded, retrying in %.1fs (attempt %d/%d)",
-                                    delay, attempt + 1, max_retries)
-                        time.sleep(delay)
-                        delay = min(delay * 2, 60.0)
-                        continue
-                raise  # Non-quota 403 (auth error) — don't retry
+                raise  # Quota exhaustion or auth error — don't retry, caller handles rotation
             if status in _RETRYABLE_STATUS_CODES:
                 if attempt < max_retries - 1:
                     log.warning("YouTube HTTP %d, retrying in %.1fs (attempt %d/%d)",
@@ -95,7 +88,6 @@ class YouTubeClient:
             type="channel",
             part="snippet",
             maxResults=max_results,
-            relevanceLanguage="en",
         ))
 
         channels = []
@@ -223,7 +215,6 @@ class YouTubeClient:
             type="video",
             part="snippet",
             maxResults=max_results,
-            relevanceLanguage="en",
         ))
 
         seen: set[str] = set()

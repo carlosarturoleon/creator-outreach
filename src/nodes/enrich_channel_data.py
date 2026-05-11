@@ -23,23 +23,25 @@ def enrich_channel_data(state: GraphState) -> dict:
     Phase A: Batched channels.list → subscriber count, views, language, keywords.
     Phase B: Per-channel video stats via playlistItems path (quota-efficient).
 
-    Channels enriched within the last _ENRICH_CACHE_DAYS days are served from
-    the local SQLite cache — no YouTube API quota consumed for those.
+    Channels previously enriched (subscriber_count > 0 in DB) are served from
+    the local SQLite cache permanently — no re-fetch unless --force-reenrich is set.
 
     Persists each enriched channel to SQLite.
     """
     channels = state.get("pre_filtered_channels", state.get("deduped_channels", []))
     if not channels:
         log.info("enrich_channel_data — no channels to enrich, skipping")
-        return {"enriched_channels": [], "error_log": [], "current_phase": "enrichment_complete"}
+        return {"enriched_channels": [], "error_log": [], "quota_units_spent": 0, "current_phase": "enrichment_complete"}
 
-    log.info("enrich_channel_data START — %d channels to enrich", len(channels))
+    force_reenrich = state.get("force_reenrich", False)
+    log.info("enrich_channel_data START — %d channels to enrich%s",
+             len(channels), " (force-reenrich: cache bypassed)" if force_reenrich else "")
     db = Database()
     errors: list[str] = []
 
-    # --- Cache lookup: which channels have fresh data already? ---
+    # --- Cache lookup: skip channels already enriched unless force_reenrich ---
     all_ids = [ch["channel_id"] for ch in channels]
-    cached_map = db.get_cached_channels(all_ids)
+    cached_map = {} if force_reenrich else db.get_cached_channels(all_ids)
 
     fresh: list[dict] = []   # served from DB cache
     stale: list[dict] = []   # need YouTube API call
@@ -64,22 +66,23 @@ def enrich_channel_data(state: GraphState) -> dict:
     log.info("  Cache check — %d fresh (DB cache), %d stale (need API)", len(fresh), len(stale))
 
     enriched: list[dict] = list(fresh)  # start with cached results
+    quota_units = 0
 
     if stale:
         client = YouTubeClient()
 
-        # Phase A: batch stats for stale channels only
+        # Phase A: batch stats for stale channels only (~1 unit per 50 channels)
         stale_ids = [ch["channel_id"] for ch in stale]
         log.info("  Phase A: fetching batch stats for %d channels", len(stale_ids))
         try:
             stats_list = client.get_channel_stats(stale_ids)
+            import math
+            quota_units += math.ceil(len(stale_ids) / 50)
             log.info("  Phase A: received stats for %d channels", len(stats_list))
         except QuotaExhaustedError as e:
-            log.error("  Phase A: quota exhausted — skipping all video stats too: %s", e)
+            log.error("  Phase A: quota exhausted — will still attempt per-channel video stats: %s", e)
             errors.append(f"[enrich] Quota exhausted in Phase A: {e}")
             stats_list = []
-            # Mark quota exhausted so Phase B is skipped entirely
-            stale = []
         except Exception as e:
             log.error("  Phase A: batch stats failed: %s", e)
             errors.append(f"[enrich] Batch stats failed: {e}")
@@ -87,7 +90,7 @@ def enrich_channel_data(state: GraphState) -> dict:
 
         stats_map: dict[str, dict] = {s["channel_id"]: s for s in stats_list}
 
-        # Phase B: per-channel video engagement for stale channels only
+        # Phase B: per-channel video engagement for stale channels only (~3 units each)
         quota_exhausted = False
         for i, ch in enumerate(stale, 1):
             cid = ch["channel_id"]
@@ -103,6 +106,7 @@ def enrich_channel_data(state: GraphState) -> dict:
                         channel_id=cid,
                         max_videos=settings.max_videos_to_sample,
                     )
+                    quota_units += 3
                     log.debug("    engagement=%.2f%%, subscribers=%s",
                               video_stats.get("engagement_rate", 0),
                               stats.get("subscriber_count", "?"))
@@ -133,10 +137,11 @@ def enrich_channel_data(state: GraphState) -> dict:
                 log.error("    DB upsert failed for %s: %s", cid, e)
                 errors.append(f"[enrich] DB upsert failed for {cid}: {e}")
 
-    log.info("enrich_channel_data DONE — %d enriched (%d from cache, %d from API), %d errors",
-             len(enriched), len(fresh), len(stale), len(errors))
+    log.info("enrich_channel_data DONE — %d enriched (%d from cache, %d from API), ~%d quota units, %d errors",
+             len(enriched), len(fresh), len(stale), quota_units, len(errors))
     return {
         "enriched_channels": enriched,
         "error_log": errors,
+        "quota_units_spent": quota_units,
         "current_phase": "enrichment_complete",
     }

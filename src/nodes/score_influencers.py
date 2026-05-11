@@ -183,7 +183,7 @@ def score_influencers(state: GraphState) -> dict:
     log.info("score_influencers DONE — %d scored (%d keyword-scored, %d cache hits), %d errors",
              len(scored), fresh_scored, cache_hits, len(errors))
     return {
-        "scored_influencers": scored,
+        "pre_llm_influencers": scored,
         "error_log": errors,
         "current_phase": "scoring_complete",
     }

@@ -4,7 +4,7 @@ from googleapiclient.errors import HttpError
 
 from src.logger import get_logger
 from src.state import GraphState
-from src.tools.youtube_client import YouTubeClient
+from src.tools.youtube_client import QuotaExhaustedError, YouTubeClient
 from src.db.database import Database
 
 log = get_logger(__name__)
@@ -38,6 +38,7 @@ def search_channels(state: GraphState) -> dict:
     db = Database()
     seen_ids: set[str] = set()
     new_channels: list[dict] = []
+    quota_units = 0
     loop_start = time.monotonic()
 
     already_searched = db.get_searched_keywords()
@@ -89,6 +90,7 @@ def search_channels(state: GraphState) -> dict:
             log.info("  [%d/%d] %r → %d new channels saved to DB (total: %d)%s",
                      i, total, keyword, added, len(new_channels),
                      f" [{db_errors} DB errors]" if db_errors else "")
+            quota_units += 100
             db.mark_keyword_searched(keyword, added)
 
             # Progress + ETA
@@ -105,18 +107,17 @@ def search_channels(state: GraphState) -> dict:
             else:
                 log.info("  Search complete in %s", _fmt_seconds(elapsed))
 
+        except QuotaExhaustedError:
+            log.error("  YouTube quota exhausted — stopping search early (%d/%d keywords done)", i - 1, total)
+            break
         except HttpError as e:
-            if e.resp.status == 403 and (
-                "quotaExceeded" in str(e) or "rateLimitExceeded" in str(e) or "quota" in str(e).lower()
-            ):
-                log.error("  YouTube quota exhausted — stopping search early (%d/%d keywords done)", i - 1, total)
-                break
             log.error("  [%d/%d] Error for keyword %r: %s", i, total, keyword, e)
         except Exception as e:
             log.error("  [%d/%d] Error for keyword %r: %s", i, total, keyword, e)
 
-    log.info("search_channels DONE — %d unique channels found", len(new_channels))
+    log.info("search_channels DONE — %d unique channels found, ~%d quota units spent", len(new_channels), quota_units)
     return {
         "raw_channels": new_channels,
+        "quota_units_spent": quota_units,
         "current_phase": "search_complete",
     }

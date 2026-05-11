@@ -1,4 +1,5 @@
 import argparse
+import math
 import sys
 import uuid
 from pathlib import Path
@@ -24,6 +25,8 @@ def main() -> None:
     db_init.migrate_llm_scoring()
     db_init.migrate_add_no_email()
     db_init.migrate_add_contact_emails()
+    db_init.migrate_add_daily_quota()
+    db_init.migrate_add_quota_to_runs()
 
     parser = argparse.ArgumentParser(
         description="Windsor.ai YouTube Influencer Finder",
@@ -66,8 +69,8 @@ def main() -> None:
     parser.add_argument(
         "--languages",
         nargs="+",
-        default=["en"],
-        help="Target languages (ISO 639-1 codes)",
+        default=[],
+        help="Target languages to filter by (ISO 639-1 codes, e.g. 'en es'). Default: no language filter.",
     )
     parser.add_argument(
         "--keywords-file2",
@@ -113,6 +116,19 @@ def main() -> None:
         help="With --from-db: only load channels last updated on or after this date (YYYY-MM-DD). "
              "Defaults to today.",
     )
+    parser.add_argument(
+        "--quota-budget",
+        type=int,
+        default=8000,
+        dest="quota_budget",
+        help="Max YouTube API units to spend before skipping discover_channels (daily limit is 10,000).",
+    )
+    parser.add_argument(
+        "--force-reenrich",
+        action="store_true",
+        dest="force_reenrich",
+        help="Bypass the enrichment cache and re-fetch stats from YouTube for all channels.",
+    )
     args = parser.parse_args()
 
     # --- Resolve keywords (not required for --from-db) ---
@@ -146,8 +162,33 @@ def main() -> None:
         print("Error: --max-results must be between 1 and 50 (YouTube API limit).")
         sys.exit(1)
 
-    run_id = str(uuid.uuid4())
+    # --- Quota planning: persistent daily tracking across runs ---
+    num_keys = len(settings.youtube_api_keys)
+    total_daily_budget = 10_000 * num_keys
     db = Database()
+    spent_today = db.get_quota_spent_today()
+    remaining_quota = total_daily_budget - spent_today
+
+    if remaining_quota <= 0:
+        print(f"\nDaily quota exhausted: {spent_today:,}/{total_daily_budget:,} units used today "
+              f"({num_keys} key(s) × 10,000). Try again tomorrow.")
+        sys.exit(0)
+
+    # Estimate mandatory step costs to determine how much is left for discovery
+    if not args.from_db:
+        est_search = len(keywords) * 100
+        est_new_channels = len(keywords) * args.max_results
+        est_enrich = math.ceil(est_new_channels / 50) + est_new_channels * 3
+        est_mandatory = est_search + est_enrich
+        est_discovery = max(0, remaining_quota - est_mandatory)
+    else:
+        est_search = est_enrich = est_mandatory = est_discovery = 0
+
+    # Respect manual --quota-budget cap if set lower than remaining
+    manual_cap = args.quota_budget * num_keys
+    effective_quota_budget = min(remaining_quota, manual_cap)
+
+    run_id = str(uuid.uuid4())
     db.create_run(run_id, {
         "keywords": keywords,
         "min_subscribers": args.min_subscribers,
@@ -169,6 +210,11 @@ def main() -> None:
         log.info("Keywords:        %s", keywords)
         log.info("Max results:     %s per keyword", args.max_results)
         log.info("Max seed chans:  %s (related traversal)", args.max_seed_channels)
+        log.info("Quota today:     %d/%d used (%d remaining)", spent_today, total_daily_budget, remaining_quota)
+        log.info("Quota est:       search=%d enrich=%d discovery≤%d", est_search, est_enrich, est_discovery)
+        log.info("Quota budget:    %d units (effective cap)", effective_quota_budget)
+    if args.force_reenrich:
+        log.info("Force reenrich:  ON (bypassing enrichment cache)")
     if args.stop_after_filter:
         log.info("Mode: PREVIEW (stops after filter)")
 
@@ -182,6 +228,9 @@ def main() -> None:
     else:
         print(f"Keywords:        {keywords}")
         print(f"Max results:     {args.max_results} per keyword")
+        print(f"Quota today:     {spent_today:,}/{total_daily_budget:,} used  ({remaining_quota:,} remaining)")
+        print(f"Quota estimate:  search={est_search}  enrich={est_enrich}  discovery≤{est_discovery}")
+        print(f"Effective cap:   {effective_quota_budget:,} units")
     if args.stop_after_filter:
         print("Mode:            PREVIEW (stops after filter — no LLM scoring or emails)")
     print()
@@ -201,6 +250,8 @@ def main() -> None:
             "target_languages": args.languages,
             "max_results_per_keyword": args.max_results,
             "max_seed_channels": args.max_seed_channels,
+            "quota_budget": effective_quota_budget,
+            "force_reenrich": args.force_reenrich,
             "stop_after_filter": args.stop_after_filter,
             "run_id": run_id,
             "raw_channels": [],
@@ -208,10 +259,12 @@ def main() -> None:
             "pre_filtered_channels": [],
             "enriched_channels": all_channels,
             "filtered_channels": [],
+            "pre_llm_influencers": [],
             "scored_influencers": [],
             "outreach_emails": [],
             "error_log": [],
             "skipped_channel_ids": [],
+            "quota_units_spent": 0,
             "current_phase": "enrichment_complete",
         }
     else:
@@ -224,6 +277,8 @@ def main() -> None:
             "target_languages": args.languages,
             "max_results_per_keyword": args.max_results,
             "max_seed_channels": args.max_seed_channels,
+            "quota_budget": effective_quota_budget,
+            "force_reenrich": args.force_reenrich,
             "stop_after_filter": args.stop_after_filter,
             "run_id": run_id,
             "raw_channels": [],
@@ -231,15 +286,19 @@ def main() -> None:
             "pre_filtered_channels": [],
             "enriched_channels": [],
             "filtered_channels": [],
+            "pre_llm_influencers": [],
             "scored_influencers": [],
             "outreach_emails": [],
             "error_log": [],
             "skipped_channel_ids": [],
+            "quota_units_spent": 0,
             "current_phase": "initializing",
         }
 
     try:
         final_state = graph.invoke(initial_state)
+        quota_spent_this_run = final_state.get("quota_units_spent", 0)
+        db.add_quota_spent(quota_spent_this_run)
         db.finish_run(run_id, {
             "total_found": len(final_state.get("raw_channels", [])),
             "total_deduped": len(final_state.get("deduped_channels", [])),
@@ -249,7 +308,10 @@ def main() -> None:
             "total_scored": len(final_state.get("scored_influencers", [])),
             "total_emailed": len(final_state.get("outreach_emails", [])),
             "error_count": len(final_state.get("error_log", [])),
+            "quota_units_spent": quota_spent_this_run,
         })
+        log.info("Quota spent this run: %d units (today total: %d/%d)",
+                 quota_spent_this_run, spent_today + quota_spent_this_run, total_daily_budget)
     except Exception as e:
         log.error("Pipeline failed: %s", e)
         db.finish_run(run_id, {"error_count": 1}, status="failed")
