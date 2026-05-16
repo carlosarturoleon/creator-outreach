@@ -29,17 +29,24 @@ def discover_channels(state: GraphState) -> dict:
     max_results = state.get("max_results_per_keyword", 20)
     max_seed_channels = state.get("max_seed_channels", 10)
 
-    # Quota budget gate — skip discovery if we're already over budget
+    # Quota budget gate — skip discovery if we're already over budget or no room after reserve
     quota_spent = state.get("quota_units_spent", 0)
     quota_budget = state.get("quota_budget", 8000)
-    if quota_spent >= quota_budget:
+    enrich_reserve = state.get("enrich_quota_reserve", 0)
+    # Units available for discovery = budget minus already spent minus what must be kept for enrichment
+    discovery_allowance = quota_budget - quota_spent - enrich_reserve
+    if discovery_allowance <= 0:
         log.warning(
-            "discover_channels — quota budget reached (%d/%d units spent), skipping discovery",
-            quota_spent, quota_budget,
+            "discover_channels — no quota left for discovery after reserving %d units for enrichment "
+            "(%d/%d spent), skipping",
+            enrich_reserve, quota_spent, quota_budget,
         )
         return {"raw_channels": [], "quota_units_spent": 0, "current_phase": "discovery_skipped"}
 
-    log.info("discover_channels — quota budget: %d/%d units used so far", quota_spent, quota_budget)
+    log.info(
+        "discover_channels — quota budget: %d/%d used, %d reserved for enrichment, %d available for discovery",
+        quota_spent, quota_budget, enrich_reserve, discovery_allowance,
+    )
 
     client = YouTubeClient()
     db = Database()
@@ -52,6 +59,13 @@ def discover_channels(state: GraphState) -> dict:
     # ── Part A: Video-level keyword search ────────────────────────────────────
     log.info("discover_channels Part A — video search, %d keywords", len(keywords))
     for i, keyword in enumerate(keywords, 1):
+        # Stop early if spending another 100 units would eat into the enrichment reserve
+        if quota_units >= discovery_allowance:
+            log.warning(
+                "  [%d/%d] discovery allowance reached (%d/%d units used) — stopping Part A to preserve enrichment quota",
+                i, len(keywords), quota_units, discovery_allowance,
+            )
+            break
         try:
             results = client.search_channels_via_videos(keyword, max_results=max_results)
             added = 0

@@ -13,6 +13,7 @@ class GraphState(TypedDict):
     max_results_per_keyword: int
     max_seed_channels: int  # max seed channels for related-channel traversal
     quota_budget: int       # max units to spend before skipping discover_channels (default 8000)
+    enrich_quota_reserve: int  # units to keep reserved for enrichment (never spend in discovery)
     force_reenrich: bool    # bypass enrichment cache and re-fetch all stats from YouTube
 
     # --- Pipeline data (operator.add = safe append, enables future parallelism) ---
