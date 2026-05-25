@@ -1,0 +1,335 @@
+# Pipeline behavior configuration
+# Controls scoring thresholds, keyword lists, filters, discovery, and YouTube retry logic
+# Secrets and API keys go in .env, not here
+
+# ---------------------------------------------------------------------------
+# LLM score filter (llm_score_influencers node)
+# ---------------------------------------------------------------------------
+llm_scoring:
+  score_floor: 4   # channels scoring below this are dropped from the pipeline
+
+# ---------------------------------------------------------------------------
+# Deterministic scoring (score_influencers node)
+# ---------------------------------------------------------------------------
+scoring:
+  cache_days: 30               # reuse cached score if scored within this many days
+  metrics_change_threshold: 0.10  # re-score if engagement or audience tier changed >10%
+  min_subscribers: 1000        # hard floor — channels below this score 0
+
+  # Scoring component max points (must sum to 100)
+  weights:
+    engagement_max: 35         # log-scale of engagement rate
+    audience_size_max: 15      # tiered by subscriber count
+    keyword_relevance_max: 25  # scaled from keyword_scorer (0–30 → 0–25)
+    tutorial_signal_max: 15    # how-to / tutorial video title matches
+    upload_recency_max: 10     # upload cadence
+
+  # Audience size tiers (pts awarded when subscriber_count < upper bound)
+  # Listed in ascending order; last entry is the fallback for 500k+
+  audience_size_tiers:
+    - max_subscribers: 1000
+      pts: 0
+    - max_subscribers: 5000
+      pts: 3
+    - max_subscribers: 10000
+      pts: 10
+    - max_subscribers: 50000
+      pts: 15    # sweet spot
+    - max_subscribers: 200000
+      pts: 12
+    - max_subscribers: 500000
+      pts: 7
+    - max_subscribers: null    # 500k+ fallback
+      pts: 3
+
+  # Upload recency tiers (pts awarded when upload_frequency_days <= threshold)
+  upload_recency_tiers:
+    - max_days: 7
+      pts: 10
+    - max_days: 14
+      pts: 7
+    - max_days: 30
+      pts: 3
+    - max_days: null   # >30 days fallback
+      pts: 0
+
+  # Tutorial signal matching — checked against recent_video_titles (lowercase)
+  # Each match adds tutorial_pts_per_match pts, capped at tutorial_signal_max
+  tutorial_pts_per_match: 5
+  tutorial_signals:
+    - how to
+    - tutorial
+    - step by step
+    - guide
+    - setup
+    - set up
+    - course
+    - beginner
+    - learn
+    - walkthrough
+    - explained
+    - for beginners
+    - masterclass
+    - training
+    - getting started
+
+# ---------------------------------------------------------------------------
+# Keyword relevance scoring (keyword_scorer)
+# Raw points scale: 0 → ~50 (all high-value matched), normalized to 0–30
+# ---------------------------------------------------------------------------
+keyword_scoring:
+  max_raw_pts: 50      # theoretical max raw keyword score (used for normalization)
+  max_scaled_pts: 30   # output range after normalization
+
+  # Rationale fit thresholds (raw keyword_pts)
+  fit_thresholds:
+    strong: 6
+    good: 4
+    moderate: 2
+    # below moderate → weak fit
+
+  # Max niche tags to return per channel
+  max_niche_tags: 5
+
+  # Negative keywords — any match immediately disqualifies the channel (score = 0)
+  negative_keywords:
+    - crypto
+    - nft
+    - web3
+    - blockchain
+    - defi
+    - lifestyle
+    - vlog
+    - daily vlog
+    - travel vlog
+    - gaming
+    - gameplay
+    - "let's play"
+    - entertainment
+    - music
+    - comedy
+    - fitness
+    - workout
+    - gym
+    - cooking
+    - recipe
+    - food
+    - fashion
+    - beauty
+    - makeup
+    - kids
+    - family
+    - parenting
+    - passive income secrets
+    - get rich
+    - reposting clips
+
+  # High-value keywords: 3 pts each — direct product use-case signals
+  high_value_keywords:
+    - google analytics
+    - ga4
+    - attribution
+    - conversion tracking
+    - marketing analytics
+    - looker studio
+    - data studio
+    - google tag manager
+    - gtm
+    - facebook pixel
+    - meta pixel
+    - ecommerce analytics
+    - shopify analytics
+    - multi-channel tracking
+    - marketing attribution
+    - analytics dashboard
+    - marketing data
+    - hubspot
+    - supermetrics
+
+  # Medium-value keywords: 2 pts each — paid advertising / performance marketing
+  medium_value_keywords:
+    - ppc
+    - paid advertising
+    - media buying
+    - paid ads
+    - paid media
+    - google ads
+    - facebook ads
+    - meta ads
+    - tiktok ads
+    - linkedin ads
+    - pinterest ads
+    - snapchat ads
+    - amazon ads
+    - performance marketing
+    - roi tracking
+    - roi measurement
+    - marketing measurement
+    - data-driven marketing
+    - digital analytics
+    - ad performance
+    - shopify
+    - salesforce
+    - bigquery
+    - snowflake
+    - amazon redshift
+    - looker
+    - tableau
+    - power bi
+    - google sheets
+    - microsoft excel
+    - ads manager
+    - marketing dashboard
+    - affiliate marketing
+    - martech
+
+  # Low-value keywords: 1 pt each — general digital marketing
+  low_value_keywords:
+    - digital marketing
+    - marketing tips
+    - business growth
+    - social media marketing
+    - seo
+    - content marketing
+    - email marketing
+    - lead generation
+    - growth hacking
+    - saas
+    - analytics
+    - data
+    - ecommerce
+    - dropshipping
+
+  # Keyword → human-readable niche tag mapping
+  # Used by _infer_niche_tags(); keywords not listed here produce no tag
+  niche_tag_map:
+    google analytics: Google Analytics
+    ga4: GA4
+    attribution: Marketing Attribution
+    conversion tracking: Conversion Tracking
+    marketing analytics: Marketing Analytics
+    looker studio: Looker Studio
+    data studio: Looker Studio
+    google tag manager: Google Tag Manager
+    gtm: Google Tag Manager
+    facebook pixel: Meta Pixel
+    meta pixel: Meta Pixel
+    ecommerce analytics: eCommerce Analytics
+    shopify analytics: Shopify Analytics
+    shopify: Shopify
+    hubspot: HubSpot
+    salesforce: Salesforce
+    multi-channel tracking: Multi-Channel Attribution
+    google ads: Google Ads
+    facebook ads: Facebook Ads
+    meta ads: Meta Ads
+    tiktok ads: TikTok Ads
+    linkedin ads: LinkedIn Ads
+    pinterest ads: Pinterest Ads
+    snapchat ads: Snapchat Ads
+    amazon ads: Amazon Ads
+    performance marketing: Performance Marketing
+    media buying: Media Buying
+    paid ads: Paid Ads
+    paid media: Paid Media
+    data-driven marketing: Data-Driven Marketing
+    digital analytics: Digital Analytics
+    ppc: PPC
+    saas: SaaS
+    ecommerce: eCommerce
+    affiliate marketing: Affiliate Marketing
+    martech: MarTech
+    bigquery: BigQuery
+    snowflake: Snowflake
+    amazon redshift: Amazon Redshift
+    google sheets: Google Sheets
+    microsoft excel: Microsoft Excel
+    power bi: Power BI
+    tableau: Tableau
+    seo: SEO
+    digital marketing: Digital Marketing
+    supermetrics: Marketing Tools
+
+# ---------------------------------------------------------------------------
+# Channel filter (filter_influencers node)
+# Niche keywords for the soft filter — at least one must match channel text
+# ---------------------------------------------------------------------------
+filter:
+  niche_keywords:
+    # Core marketing / attribution
+    - marketing
+    - analytics
+    - attribution
+    - digital marketing
+    - seo
+    - ppc
+    - performance marketing
+    - paid advertising
+    - conversion tracking
+    - media buying
+    - growth hacking
+    - affiliate
+    - paid ads
+    - paid media
+    - martech
+    - marketing technology
+    # Example: data source tools
+    - google analytics
+    - ga4
+    - gtm
+    - google tag manager
+    - facebook ads
+    - meta ads
+    - google ads
+    - tiktok ads
+    - linkedin ads
+    - pinterest ads
+    - snapchat ads
+    - amazon ads
+    - amazon seller
+    - hubspot
+    - salesforce
+    - shopify
+    - stripe
+    # Example: destination/output tools
+    - looker studio
+    - data studio
+    - looker
+    - bigquery
+    - snowflake
+    - amazon redshift
+    - power bi
+    - tableau
+    - google sheets
+    - microsoft excel
+    # Broader niche
+    - ecommerce
+    - saas
+    - ads manager
+    - data
+    - business intelligence
+
+# ---------------------------------------------------------------------------
+# Discovery node (discover_channels)
+# ---------------------------------------------------------------------------
+discovery:
+  seed_channel_score_threshold: 50   # min composite_score to qualify as a seed channel
+  related_max_videos: 3              # videos sampled per seed for related traversal
+  related_max_results: 10            # max related channels fetched per video
+  # Quota cost constants (informational — used in log messages and quota accounting)
+  quota_cost_video_search: 100       # units per search.list call (Part A)
+  quota_cost_related_traversal: 302  # units per seed channel (Part B): ~1+1+100×3
+
+# ---------------------------------------------------------------------------
+# YouTube API client (youtube_client)
+# ---------------------------------------------------------------------------
+youtube:
+  retryable_status_codes:
+    - 429
+    - 500
+    - 502
+    - 503
+    - 504
+  max_retries: 5
+  initial_backoff_seconds: 1.0
+  max_backoff_seconds: 60.0

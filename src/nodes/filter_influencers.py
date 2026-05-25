@@ -1,28 +1,18 @@
+from pathlib import Path
+
+import yaml
+
 from src.logger import get_logger
 from src.state import GraphState
 from src.db.database import Database
 
 log = get_logger(__name__)
 
-WINDSOR_AI_NICHES = {
-    # Core marketing / attribution
-    "marketing", "analytics", "attribution", "digital marketing",
-    "seo", "ppc", "performance marketing", "paid advertising",
-    "conversion tracking", "media buying", "growth hacking",
-    "affiliate", "paid ads", "paid media", "martech", "marketing technology",
-    # Windsor.ai data sources
-    "google analytics", "ga4", "gtm", "google tag manager",
-    "facebook ads", "meta ads", "google ads", "tiktok ads", "linkedin ads",
-    "pinterest ads", "snapchat ads", "amazon ads", "amazon seller",
-    "hubspot", "salesforce", "shopify", "stripe",
-    # Windsor.ai destinations
-    "looker studio", "data studio", "looker", "bigquery", "snowflake",
-    "amazon redshift", "power bi", "tableau", "google sheets",
-    "microsoft excel",
-    # Broader niche
-    "ecommerce", "saas", "ads manager", "data",
-    "business intelligence",
-}
+_CONFIG_PATH = Path(__file__).parent.parent.parent / "pipeline_config.yaml"
+with open(_CONFIG_PATH) as _f:
+    _cfg = yaml.safe_load(_f)
+
+NICHE_KEYWORDS: set[str] = set(_cfg["filter"]["niche_keywords"])
 
 
 def filter_influencers(state: GraphState) -> dict:
@@ -34,7 +24,7 @@ def filter_influencers(state: GraphState) -> dict:
       2. engagement_rate >= min_engagement_rate
       3. Language match (permissive — only blocks confirmed mismatches)
 
-    Soft filter (at least one Windsor.ai niche keyword must appear):
+    Soft filter (at least one niche keyword must appear):
       4. Niche relevance via keyword match in description + keywords + video titles
     """
     filtered: list[dict] = []
@@ -61,7 +51,7 @@ def filter_influencers(state: GraphState) -> dict:
             if ch_lang and ch_lang not in target_langs:
                 continue
 
-        # Soft filter 4: Windsor.ai niche keyword match
+        # Soft filter 4: niche keyword match
         text_blob = " ".join([
             ch.get("description", ""),
             " ".join(ch.get("keywords", [])),
@@ -69,7 +59,7 @@ def filter_influencers(state: GraphState) -> dict:
             ch.get("channel_title", ""),
         ]).lower()
 
-        if not any(niche in text_blob for niche in WINDSOR_AI_NICHES):
+        if not any(niche in text_blob for niche in NICHE_KEYWORDS):
             continue
 
         filtered.append(ch)

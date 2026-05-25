@@ -43,15 +43,13 @@ def search_channels(state: GraphState) -> dict:
 
     already_searched = db.get_searched_keywords()
     keywords_set = set(keywords)
-    if already_searched and keywords_set.issubset(already_searched):
-        # All keywords were completed in a previous run — start fresh
-        log.info("  Previous run was complete — clearing search cache for a fresh run")
-        db.clear_searched_keywords()
-        already_searched = set()
-    elif already_searched:
-        pending = keywords_set - already_searched
+    pending = keywords_set - already_searched
+    if already_searched & keywords_set:
         log.info("  Resuming — %d/%d keywords already searched, %d pending",
                  len(already_searched & keywords_set), total, len(pending))
+    if not pending:
+        log.info("  All keywords already searched — loading from DB cache, skipping API calls")
+
 
     for i, keyword in enumerate(keywords, 1):
         if keyword in already_searched:

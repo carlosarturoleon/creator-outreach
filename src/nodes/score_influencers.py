@@ -1,4 +1,7 @@
 import math
+from pathlib import Path
+
+import yaml
 
 from src.logger import get_logger
 from src.state import GraphState
@@ -7,66 +10,70 @@ from src.scoring.keyword_scorer import score_channel_relevance
 
 log = get_logger(__name__)
 
-_SCORE_CACHE_DAYS = 30           # reuse cached score if scored within this many days
-_METRICS_CHANGE_THRESHOLD = 0.10  # re-score if engagement or audience tier changed >10%
-_MIN_SUBSCRIBERS = 1_000         # hard floor — channels below this score 0 (no real audience)
+# ---------------------------------------------------------------------------
+# Load pipeline_config.yaml once at module import time
+# ---------------------------------------------------------------------------
+_CONFIG_PATH = Path(__file__).parent.parent.parent / "pipeline_config.yaml"
 
-# Tutorial/teaching intent signals — matched against recent_video_titles only
-_TUTORIAL_SIGNALS: list[str] = [
-    "how to", "tutorial", "step by step", "guide", "setup", "set up",
-    "course", "beginner", "learn", "walkthrough", "explained", "for beginners",
-    "masterclass", "training", "getting started",
-]
+with open(_CONFIG_PATH) as _f:
+    _cfg = yaml.safe_load(_f)
+
+_sc = _cfg["scoring"]
+
+_SCORE_CACHE_DAYS: int = _sc["cache_days"]
+_METRICS_CHANGE_THRESHOLD: float = _sc["metrics_change_threshold"]
+_MIN_SUBSCRIBERS: int = _sc["min_subscribers"]
+
+_ENGAGEMENT_MAX: float = float(_sc["weights"]["engagement_max"])
+_AUDIENCE_SIZE_MAX: float = float(_sc["weights"]["audience_size_max"])
+_KW_RELEVANCE_MAX: float = float(_sc["weights"]["keyword_relevance_max"])
+_TUTORIAL_MAX: float = float(_sc["weights"]["tutorial_signal_max"])
+_UPLOAD_RECENCY_MAX: float = float(_sc["weights"]["upload_recency_max"])
+
+_TUTORIAL_SIGNALS: list[str] = _sc["tutorial_signals"]
+_TUTORIAL_PTS_PER_MATCH: float = float(_sc["tutorial_pts_per_match"])
+
+# Pre-process tier lists (sort ascending by max bound, None = infinity)
+_AUDIENCE_TIERS: list[dict] = _sc["audience_size_tiers"]
+_RECENCY_TIERS: list[dict] = _sc["upload_recency_tiers"]
+
+# keyword_scorer returns 0–30; scale to 0–keyword_relevance_max
+_KW_SCALE_FACTOR: float = _KW_RELEVANCE_MAX / float(_cfg["keyword_scoring"]["max_scaled_pts"])
 
 
 def _engagement_score(rate: float) -> float:
-    """0-35 pts using log scale. At 1% ER → ~14 pts, 3% → ~24 pts, 10% → 35 pts."""
+    """0–{max} pts using log scale."""
     if rate <= 0:
         return 0.0
-    return round(min(35.0, 35.0 * math.log1p(rate) / math.log1p(10.0)), 2)
+    return round(min(_ENGAGEMENT_MAX, _ENGAGEMENT_MAX * math.log1p(rate) / math.log1p(10.0)), 2)
 
 
 def _audience_size_score(subscribers: int) -> float:
-    """0-15 pts. Peak at 10k-50k (sweet spot for affiliate-hungry creators).
-    Large channels score lower — they rarely bother with affiliate commissions.
-    """
-    if subscribers < 1_000:
-        return 0.0
-    elif subscribers < 5_000:
-        return 3.0
-    elif subscribers < 10_000:
-        return 10.0
-    elif subscribers < 50_000:
-        return 15.0   # sweet spot
-    elif subscribers < 200_000:
-        return 12.0
-    elif subscribers < 500_000:
-        return 7.0
-    else:
-        return 3.0
+    """0–{max} pts. Tiered from pipeline_config.yaml."""
+    for tier in _AUDIENCE_TIERS:
+        cap = tier["max_subscribers"]
+        if cap is None or subscribers < cap:
+            return float(tier["pts"])
+    return float(_AUDIENCE_TIERS[-1]["pts"])
 
 
 def _tutorial_score(recent_video_titles: list) -> float:
-    """0-15 pts. Counts how many recent video titles contain teaching/how-to signals.
-    3+ tutorial-style titles → full 15 pts. Each match adds 5 pts (capped).
-    """
+    """0–{max} pts. Counts tutorial-style signals in recent video titles."""
     if not recent_video_titles:
         return 0.0
     titles_text = " ".join(str(t) for t in recent_video_titles).lower()
     matches = sum(1 for sig in _TUTORIAL_SIGNALS if sig in titles_text)
-    return round(min(15.0, matches * 5.0), 2)
+    return round(min(_TUTORIAL_MAX, matches * _TUTORIAL_PTS_PER_MATCH), 2)
 
 
 def _upload_recency_score(upload_frequency_days: float) -> float:
-    """0-10 pts based on upload cadence."""
+    """0–{max} pts based on upload cadence. Tiered from pipeline_config.yaml."""
     if upload_frequency_days <= 0:
         return 0.0
-    if upload_frequency_days <= 7:
-        return 10.0
-    if upload_frequency_days <= 14:
-        return 7.0
-    if upload_frequency_days <= 30:
-        return 3.0
+    for tier in _RECENCY_TIERS:
+        cap = tier["max_days"]
+        if cap is None or upload_frequency_days <= cap:
+            return float(tier["pts"])
     return 0.0
 
 
@@ -88,20 +95,17 @@ def _metrics_changed_significantly(ch: dict, cached: dict) -> bool:
 
 def score_influencers(state: GraphState) -> dict:
     """
-    Node 4: Score each filtered channel for Windsor.ai affiliate program fit.
+    Node 4: Score each filtered channel for affiliate program fit.
 
-    Scoring breakdown (max 100 pts):
+    Scoring breakdown (max 100 pts, weights from pipeline_config.yaml):
       - Engagement score   0-35  log-scale of engagement rate
       - Audience size      0-15  tiered; peak at 10k-50k (affiliate-hungry tier)
       - Keyword relevance  0-25  deterministic keyword matching (scaled from 0-30)
-      - Tutorial signal    0-15  how-to / tutorial video titles (NEW)
-      - Upload recency     0-10  upload cadence (standalone component)
+      - Tutorial signal    0-15  how-to / tutorial video titles
+      - Upload recency     0-10  upload cadence
 
-    Tutorial signal is the strongest new predictor: creators who make
-    "how to set up X" videos already recommend tools to their audience.
-
-    Cached scores (within _SCORE_CACHE_DAYS) are reused unless metrics
-    changed significantly. Results persisted to SQLite, sorted by composite_score desc.
+    Cached scores (within cache_days) are reused unless metrics changed
+    significantly. Results persisted to SQLite, sorted by composite_score desc.
     """
     db = Database()
     errors: list[str] = []
@@ -133,7 +137,7 @@ def score_influencers(state: GraphState) -> dict:
         use_cache = cached is not None and not _metrics_changed_significantly(ch, cached)
 
         if use_cache:
-            relevance_pts = cached["relevance_score"] * (25.0 / 30.0)
+            relevance_pts = cached["relevance_score"] * _KW_SCALE_FACTOR
             rationale = cached.get("relevance_rationale", "")
             niche_tags = cached.get("niche_tags", [])
             cache_hits += 1
@@ -141,8 +145,7 @@ def score_influencers(state: GraphState) -> dict:
                      i, len(channels), ch.get("channel_title", cid), relevance_pts)
         else:
             kw_result = score_channel_relevance(ch)
-            # keyword_scorer returns 0-30; scale to 0-25 for new weight
-            relevance_pts = round(kw_result["relevance_score"] * (25.0 / 30.0), 2)
+            relevance_pts = round(kw_result["relevance_score"] * _KW_SCALE_FACTOR, 2)
             rationale = kw_result["relevance_rationale"]
             niche_tags = kw_result["niche_tags"]
             fresh_scored += 1

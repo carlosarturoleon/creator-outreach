@@ -78,7 +78,7 @@ def save_results(state: GraphState) -> dict:
 
     # Print summary
     print(f"\n{'='*60}")
-    print("Windsor.ai Influencer Finder — Run Complete")
+    print("YouTube Influencer Finder — Run Complete")
     print(f"{'='*60}")
     print(f"  Channels found:       {full_output['total_found']}")
     print(f"  Already emailed:      {full_output['total_skipped']} (skipped)")

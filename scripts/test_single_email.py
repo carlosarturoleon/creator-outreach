@@ -15,9 +15,9 @@ influencer = {
     "engagement_rate": 0.0,
     "llm_rationale": (
         "Natalia is a digital data analyst who explicitly teaches Looker Studio (full courses), "
-        "Google BigQuery, Google Ads, and Facebook Ads — all core Windsor.ai data sources and "
+        "Google BigQuery, Google Ads, and Facebook Ads — all core product data sources and "
         "destinations. Her recent video titles and channel description directly overlap with "
-        "Windsor.ai's exact use case of connecting ad platforms to BI tools like Looker Studio and BigQuery."
+        "the product's exact use case of connecting ad platforms to BI tools like Looker Studio and BigQuery."
     ),
     "niche_tags": ["Looker Studio", "Google Ads", "Facebook Ads"],
 }

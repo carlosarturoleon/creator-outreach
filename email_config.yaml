@@ -1,0 +1,169 @@
+# Email generation behavior configuration
+# Edit prompts and constraints here to tune outreach without touching Python
+# Secrets and API keys go in .env, not here
+
+# ---------------------------------------------------------------------------
+# Batch API settings
+# ---------------------------------------------------------------------------
+batch:
+  poll_interval: 15      # seconds between status checks
+  timeout: 3600          # max seconds to wait before raising TimeoutError (1 hour)
+  max_tokens: 1500       # max tokens per email response
+
+# ---------------------------------------------------------------------------
+# Channel data truncation — controls what gets sent to the LLM per channel
+# ---------------------------------------------------------------------------
+context:
+  description_max_chars: 600   # truncate channel description to this many characters
+  max_video_titles: 8          # max recent video titles to include
+
+# ---------------------------------------------------------------------------
+# Email tool schema constraints
+# ---------------------------------------------------------------------------
+tool:
+  name: write_email
+  description: "Write a personalized outreach email for this YouTube creator."
+  subject_max_words: 7
+  subject_max_chars: 50
+  body_min_words: 100
+  body_max_words: 200
+  subject_strategies:
+    - video_reference
+    - audience_problem
+    - curiosity
+    - casual
+  languages:
+    - en
+    - es
+  confidence_min_to_pass: 7    # regenerate if self-assessed confidence < this
+
+# ---------------------------------------------------------------------------
+# Sender identity — used in sign-offs
+# ---------------------------------------------------------------------------
+sender:
+  name: Your Name
+  title_en: Your Title
+  title_es: Tu Cargo
+  company: Your Company
+
+# ---------------------------------------------------------------------------
+# Outreach purpose
+# Describe WHY you are reaching out. This is injected into the prompt so
+# Claude can write a relevant, specific email for your use case.
+# Examples:
+#   - "I'd like to collaborate on a sponsored video about our product."
+#   - "I'm researching how creators in this space approach audience growth."
+#   - "We're building a creator community and want to invite them to join."
+#   - "We'd like to feature their channel in our newsletter."
+# ---------------------------------------------------------------------------
+outreach:
+  purpose: "Replace this with a one-sentence description of why you are reaching out."
+  cta_en: "Worth a quick chat?"
+  cta_es: "¿Te parece si hablamos?"
+
+# ---------------------------------------------------------------------------
+# System prompt
+# Defines the sender persona and writing rules.
+# The outreach.purpose above is injected into the user prompt at runtime.
+# ---------------------------------------------------------------------------
+system_prompt: |
+  You are writing a cold outreach email to a YouTube creator on behalf of your sender.
+  Your goal is to write an email that gets a genuine reply — not one that gets ignored.
+
+  ## Core writing principles
+  1. Peer-to-peer tone. You are one professional contacting another. Never sound like a sales rep or PR person.
+  2. Specificity beats flattery. Name the actual video that made you reach out. One specific reference is worth more than three compliments.
+  3. Respect their time. Target 100–200 words total. Every sentence must earn its place.
+  4. Evidence-based hook. The opening sentence must reference a specific video or observable content pattern — not a vague compliment.
+
+  ## Subject line strategy — apply in priority order
+  STRATEGY 1 — VIDEO REFERENCE (default, use whenever ≥1 video title is available):
+    Pattern: "Your [core topic] video" or "Re: [core topic]"
+    Rule: if the video title is >50 chars, extract the core 2–4 word topic.
+
+  STRATEGY 2 — AUDIENCE PROBLEM (use when video titles are generic/unavailable):
+    Pattern: "[Their audience]'s [specific problem]"
+    Rule: the problem must be directly inferable from their niche_tags or description.
+
+  STRATEGY 3 — CURIOSITY:
+    Pattern: "Question about [their content area]"
+
+  STRATEGY 4 — CASUAL (last resort):
+    Pattern: "Quick question for [channel name]"
+
+  HARD CONSTRAINTS — no exceptions:
+  - Max 7 words OR 50 characters (whichever limit is hit first)
+  - Banned words: partnership, collaboration, opportunity, sponsorship, commission, deal, excited, amazing, incredible, synergy
+  - Must pass the "from a peer" test: would a colleague send this subject line?
+  - Spanish channels: subject line must be in Spanish using the same strategy logic
+
+  ## Forbidden email patterns
+  - Generic openers: "amazing channel", "love your content", "great videos"
+  - "I hope this email finds you well" or any variant
+  - Pressure tactics: "act now", "limited spots", "exclusive"
+  - Asking for a meeting or call in the first email
+
+  ## Language rule
+  - Spanish ONLY if BOTH the channel description AND video titles are primarily in Spanish.
+  - ALL other languages default to English.
+  - Spanish emails must be culturally natural — not literal translations.
+
+# ---------------------------------------------------------------------------
+# User prompt template — {variables} filled per channel at runtime.
+# Available variables: channel_title, subscribers, engagement_rate,
+#                      description, video_titles, niche_tags, llm_rationale,
+#                      purpose, cta_en, cta_es,
+#                      body_min_words, body_max_words, confidence_min_to_pass
+# ---------------------------------------------------------------------------
+user_prompt_template: |
+  Write a personalized outreach email for this YouTube creator using the write_email tool.
+
+  ## CREATOR DATA
+  - Channel: {channel_title}
+  - Subscribers: {subscribers:,} | Engagement: {engagement_rate:.2f}%
+  - Description: {description}
+  - Recent video titles: {video_titles}
+  - Niche tags: {niche_tags}
+  - Why they were selected: {llm_rationale}
+
+  ## OUTREACH PURPOSE
+  {purpose}
+
+  ---
+
+  ## STEP 1 — Detect language
+  - If BOTH description AND video titles are primarily Spanish → language = "es"
+  - Otherwise → language = "en"
+
+  ## STEP 2 — Select the anchor video
+  Pick the single most relevant video title from the list above.
+  If >50 chars, extract its 2–4 word core topic.
+  Store as referenced_video_title.
+
+  ## STEP 3 — Generate subject line
+  Apply strategy priority: video_reference → audience_problem → curiosity → casual.
+  Enforce: ≤7 words AND ≤50 characters. No banned words. Match language from Step 1.
+
+  ## STEP 4 — Determine greeting name
+  Priority order:
+  1. First name extracted from description ("My name is X", "I'm X", "Soy X")
+  2. If channel is a company/brand → "[Name] team" (EN) or "equipo de [Name]" (ES)
+  3. Otherwise → use the channel name directly
+
+  ## STEP 5 — Write the email body ({body_min_words}–{body_max_words} words total)
+  - Open with: "Hey [name]," (EN) | "Hola [nombre]," (ES)
+  - Hook: reference the anchor video by name and connect it to why you are reaching out.
+  - Body: state who you are and the purpose of your outreach concisely.
+  - Close with the CTA: "{cta_en}" (EN) | "{cta_es}" (ES)
+  - Sign-off (EN): "Best,\nYOUR_NAME\nYOUR_TITLE\nYOUR_COMPANY"
+  - Sign-off (ES): "Un saludo,\nYOUR_NAME\nYOUR_TITLE\nYOUR_COMPANY"
+
+  ## STEP 6 — Self-critique before returning
+  Score 1 point each (max 5):
+    1. Subject line is ≤50 characters
+    2. Hook names the anchor video explicitly
+    3. Outreach purpose is clearly communicated
+    4. No banned words present
+    5. CTA is low-pressure — not a meeting request
+
+  If total < {confidence_min_to_pass}: rewrite with a different approach. Return only the version that scores ≥{confidence_min_to_pass}.

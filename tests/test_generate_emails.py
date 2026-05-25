@@ -105,7 +105,7 @@ def test_promoter_email_is_excluded_from_batch(
     mock_fetch.return_value = {
         "UC_new": {
             "success": True,
-            "subject_line": "Join Windsor.ai",
+            "subject_line": "Check this out",
             "email_body": "Hi there",
             "personalization_hooks": [],
         }

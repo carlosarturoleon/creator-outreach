@@ -8,3 +8,6 @@ output/
 *.egg-info/
 dist/
 .DS_Store
+*.db
+.pytest_cache/
+.claude/

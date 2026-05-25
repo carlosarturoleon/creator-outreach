@@ -36,7 +36,7 @@ def _build_message(
     msg["From"] = settings.email_from or settings.smtp_user
     msg["To"] = to_addr
     msg["Subject"] = subject
-    msg["X-Windsor-Channel"] = channel_title  # debug header
+    msg["X-Channel"] = channel_title  # debug header
     msg.attach(MIMEText(body, "plain", "utf-8"))
     return msg
 
@@ -163,7 +163,7 @@ def send_emails(limit: int = 0, dry_run: bool = False) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Send Windsor.ai affiliate outreach emails")
+    parser = argparse.ArgumentParser(description="Send affiliate outreach emails")
     parser.add_argument(
         "--limit",
         type=int,

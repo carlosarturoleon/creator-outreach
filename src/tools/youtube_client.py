@@ -1,6 +1,8 @@
 import time
 from datetime import datetime
+from pathlib import Path
 
+import yaml
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -8,7 +10,15 @@ from src.config import settings
 from src.logger import get_logger
 
 log = get_logger(__name__)
-_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+_CONFIG_PATH = Path(__file__).parent.parent.parent / "pipeline_config.yaml"
+with open(_CONFIG_PATH) as _f:
+    _yt_cfg = yaml.safe_load(_f)["youtube"]
+
+_RETRYABLE_STATUS_CODES: set[int] = set(_yt_cfg["retryable_status_codes"])
+_MAX_RETRIES: int = _yt_cfg["max_retries"]
+_INITIAL_BACKOFF: float = float(_yt_cfg["initial_backoff_seconds"])
+_MAX_BACKOFF: float = float(_yt_cfg["max_backoff_seconds"])
 
 
 class QuotaExhaustedError(Exception):
@@ -24,9 +34,9 @@ def _is_quota_error(e: HttpError) -> bool:
     return reason in ("quotaExceeded", "rateLimitExceeded") or "quota" in str(e).lower()
 
 
-def _execute_with_backoff(request, max_retries: int = 5):
+def _execute_with_backoff(request, max_retries: int = _MAX_RETRIES):
     """Execute a YouTube API request with exponential backoff on transient server errors."""
-    delay = 1.0
+    delay = _INITIAL_BACKOFF
     for attempt in range(max_retries):
         try:
             return request.execute()
@@ -39,7 +49,7 @@ def _execute_with_backoff(request, max_retries: int = 5):
                     log.warning("YouTube HTTP %d, retrying in %.1fs (attempt %d/%d)",
                                 status, delay, attempt + 1, max_retries)
                     time.sleep(delay)
-                    delay = min(delay * 2, 60.0)
+                    delay = min(delay * 2, _MAX_BACKOFF)
                     continue
             raise
     raise RuntimeError(f"YouTube API request failed after {max_retries} retries")

@@ -29,7 +29,7 @@ def main() -> None:
     db_init.migrate_add_quota_to_runs()
 
     parser = argparse.ArgumentParser(
-        description="Windsor.ai YouTube Influencer Finder",
+        description="YouTube Influencer Finder",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -176,12 +176,22 @@ def main() -> None:
 
     # Estimate mandatory step costs to determine how much is left for discovery
     if not args.from_db:
-        est_search = len(keywords) * 100
-        est_new_channels = len(keywords) * args.max_results
-        est_enrich = math.ceil(est_new_channels / 50) + est_new_channels * 3
+        already_searched = db.get_searched_keywords()
+        pending_keywords = [kw for kw in keywords if kw not in already_searched]
+        est_search = len(pending_keywords) * 100
+        if pending_keywords:
+            est_new_channels = len(pending_keywords) * args.max_results
+            est_enrich = math.ceil(est_new_channels / 50) + est_new_channels * 3
+            est_discovery = max(0, remaining_quota - est_search - est_enrich)
+        else:
+            # All keywords already searched — only enrichment of unenriched channels remains
+            unenriched_count = db.count_unenriched_channels()
+            est_enrich = math.ceil(unenriched_count / 50) + unenriched_count * 3
+            est_discovery = 0  # no new keywords → no discovery
         est_mandatory = est_search + est_enrich
-        est_discovery = max(0, remaining_quota - est_mandatory)
     else:
+        pending_keywords = []
+        already_searched = set()
         est_search = est_enrich = est_mandatory = est_discovery = 0
 
     # Respect manual --quota-budget cap if set lower than remaining
@@ -207,18 +217,20 @@ def main() -> None:
     if args.from_db:
         log.info("Mode: FROM-DB (filter/score/email on existing DB channels)")
     else:
-        log.info("Keywords:        %s", keywords)
+        log.info("Keywords:        %d total, %d pending (already searched: %d)",
+                 len(keywords), len(pending_keywords), len(already_searched & set(keywords)))
         log.info("Max results:     %s per keyword", args.max_results)
         log.info("Max seed chans:  %s (related traversal)", args.max_seed_channels)
         log.info("Quota today:     %d/%d used (%d remaining)", spent_today, total_daily_budget, remaining_quota)
-        log.info("Quota est:       search=%d enrich=%d discovery≤%d", est_search, est_enrich, est_discovery)
+        log.info("Quota est:       search=%d enrich=%d discovery≤%d (based on %d pending keywords)",
+                 est_search, est_enrich, est_discovery, len(pending_keywords))
         log.info("Quota budget:    %d units (effective cap)", effective_quota_budget)
     if args.force_reenrich:
         log.info("Force reenrich:  ON (bypassing enrichment cache)")
     if args.stop_after_filter:
         log.info("Mode: PREVIEW (stops after filter)")
 
-    print(f"\nWindsor.ai Influencer Finder  [run_id: {run_id}]")
+    print(f"\nYouTube Influencer Finder  [run_id: {run_id}]")
     print(f"Min subscribers: {args.min_subscribers:,}")
     print(f"Max subscribers: {args.max_subscribers:,}" if args.max_subscribers else "Max subscribers: no cap")
     print(f"Min engagement:  {args.min_engagement}%")
@@ -226,10 +238,10 @@ def main() -> None:
     if args.from_db:
         print("Mode:            FROM-DB (filter/score/email on existing DB channels)")
     else:
-        print(f"Keywords:        {keywords}")
+        print(f"Keywords:        {len(keywords)} total, {len(pending_keywords)} pending ({len(already_searched & set(keywords))} already searched)")
         print(f"Max results:     {args.max_results} per keyword")
         print(f"Quota today:     {spent_today:,}/{total_daily_budget:,} used  ({remaining_quota:,} remaining)")
-        print(f"Quota estimate:  search={est_search}  enrich={est_enrich}  discovery≤{est_discovery}")
+        print(f"Quota estimate:  search={est_search}  enrich={est_enrich}  discovery≤{est_discovery}  (based on {len(pending_keywords)} pending keywords)")
         print(f"Effective cap:   {effective_quota_budget:,} units")
     if args.stop_after_filter:
         print("Mode:            PREVIEW (stops after filter — no LLM scoring or emails)")

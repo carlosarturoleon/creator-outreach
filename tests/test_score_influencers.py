@@ -55,16 +55,16 @@ def test_engagement_score_zero():
 
 def test_engagement_score_1pct():
     score = _engagement_score(1.0)
-    assert score == pytest.approx(11.56, abs=0.1)  # log1p scale: 1% ER → ~11.56 pts
+    assert score == pytest.approx(35.0 * math.log1p(1.0) / math.log1p(10.0), abs=0.01)
 
 
 def test_engagement_score_10pct():
     score = _engagement_score(10.0)
-    assert score == pytest.approx(40.0, abs=0.01)
+    assert score == pytest.approx(35.0, abs=0.01)
 
 
 def test_engagement_score_capped_at_40():
-    assert _engagement_score(100.0) == 40.0
+    assert _engagement_score(100.0) == 35.0
 
 
 def test_engagement_score_negative():
@@ -80,7 +80,7 @@ def test_audience_size_below_1k():
 
 
 def test_audience_size_5k():
-    assert _audience_size_score(5_000) == 5.0
+    assert _audience_size_score(5_000) == 10.0
 
 
 def test_audience_size_25k():
@@ -88,15 +88,15 @@ def test_audience_size_25k():
 
 
 def test_audience_size_100k():
-    assert _audience_size_score(100_000) == 22.0
+    assert _audience_size_score(100_000) == 12.0
 
 
 def test_audience_size_300k():
-    assert _audience_size_score(300_000) == 26.0
+    assert _audience_size_score(300_000) == 7.0
 
 
 def test_audience_size_1m():
-    assert _audience_size_score(1_000_000) == 30.0
+    assert _audience_size_score(1_000_000) == 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -142,8 +142,8 @@ def test_scores_channel_deterministically(MockDB):
     MockDB.return_value = mock_db
 
     result = score_influencers(_state([_ch()]))
-    assert len(result["scored_influencers"]) == 1
-    ch = result["scored_influencers"][0]
+    assert len(result["pre_llm_influencers"]) == 1
+    ch = result["pre_llm_influencers"][0]
     assert ch["composite_score"] > 0
     assert "engagement" in ch["score_breakdown"]
     assert "audience_size" in ch["score_breakdown"]
@@ -158,9 +158,9 @@ def test_uses_cached_score_when_fresh_and_unchanged(MockDB):
     MockDB.return_value = mock_db
 
     result = score_influencers(_state([_ch()]))
-    ch = result["scored_influencers"][0]
-    # Should use the cached relevance value
-    assert ch["score_breakdown"]["relevance"] == pytest.approx(15.0)
+    ch = result["pre_llm_influencers"][0]
+    # Cached relevance_score=15.0 is scaled by 25/30 in the node
+    assert ch["score_breakdown"]["relevance"] == pytest.approx(15.0 * (25.0 / 30.0), abs=0.01)
     # DB upsert is still called to refresh the record
     mock_db.upsert_scored_influencer.assert_called_once()
 
@@ -178,7 +178,7 @@ def test_invalidates_cache_on_engagement_change(MockDB):
 
     # Current channel has 3.5% ER — huge change → cache invalidated, re-scored
     result = score_influencers(_state([_ch(engagement_rate=3.5)]))
-    ch = result["scored_influencers"][0]
+    ch = result["pre_llm_influencers"][0]
     # Relevance will be re-computed by keyword_scorer, not the cached 5.0
     # We just verify it ran without error and produced a valid result
     assert ch["composite_score"] >= 0
@@ -191,11 +191,13 @@ def test_composite_equals_sum_of_parts(MockDB):
     MockDB.return_value = mock_db
 
     result = score_influencers(_state([_ch()]))
-    ch = result["scored_influencers"][0]
+    ch = result["pre_llm_influencers"][0]
     expected = round(
         ch["score_breakdown"]["engagement"]
         + ch["score_breakdown"]["audience_size"]
-        + ch["score_breakdown"]["relevance"],
+        + ch["score_breakdown"]["relevance"]
+        + ch["score_breakdown"]["tutorial"]
+        + ch["score_breakdown"]["upload_recency"],
         2,
     )
     assert ch["composite_score"] == pytest.approx(expected, abs=0.01)
@@ -211,7 +213,7 @@ def test_results_sorted_descending(MockDB):
     ch_low = _ch(channel_id="UC_low", subscriber_count=1_000, engagement_rate=0.1)
 
     result = score_influencers(_state([ch_low, ch_high]))
-    scores = [ch["composite_score"] for ch in result["scored_influencers"]]
+    scores = [ch["composite_score"] for ch in result["pre_llm_influencers"]]
     assert scores == sorted(scores, reverse=True)
 
 
@@ -222,7 +224,7 @@ def test_empty_input_returns_empty(MockDB):
     MockDB.return_value = mock_db
 
     result = score_influencers(_state([]))
-    assert result["scored_influencers"] == []
+    assert result["pre_llm_influencers"] == []
     mock_db.upsert_scored_influencer.assert_not_called()
 
 
@@ -248,7 +250,7 @@ def test_return_keys(MockDB):
     MockDB.return_value = mock_db
 
     result = score_influencers(_state([]))
-    assert "scored_influencers" in result
+    assert "pre_llm_influencers" in result
     assert "error_log" in result
     assert "current_phase" in result
 

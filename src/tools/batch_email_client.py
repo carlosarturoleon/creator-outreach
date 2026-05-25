@@ -6,143 +6,130 @@ completes, and returns structured results as
 {channel_id: {"subject_line": str, "email_body": str, "personalization_hooks": list}}.
 
 Structured output is obtained via tool_use (no JSON parsing needed).
+
+Behavior is configured via email_config.yaml at the repo root.
+Secrets and API keys remain in .env / src/config.py.
 """
 import time
+from pathlib import Path
 
 import anthropic
+import yaml
 
 from src.config import settings
 from src.logger import get_logger
 
 log = get_logger(__name__)
 
-_DEFAULT_POLL_INTERVAL = 15
-_DEFAULT_TIMEOUT = 3600
+# ---------------------------------------------------------------------------
+# Load email_config.yaml once at module import time
+# ---------------------------------------------------------------------------
+_CONFIG_PATH = Path(__file__).parent.parent.parent / "email_config.yaml"
 
+
+def _load_email_config() -> dict:
+    with open(_CONFIG_PATH) as f:
+        return yaml.safe_load(f)
+
+
+_cfg = _load_email_config()
+
+# Batch settings
+_DEFAULT_POLL_INTERVAL: int = _cfg["batch"]["poll_interval"]
+_DEFAULT_TIMEOUT: int = _cfg["batch"]["timeout"]
+_DEFAULT_MAX_TOKENS: int = _cfg["batch"]["max_tokens"]
+
+# Context truncation
+_DESC_MAX_CHARS: int = _cfg["context"]["description_max_chars"]
+_MAX_VIDEO_TITLES: int = _cfg["context"]["max_video_titles"]
+
+# Tool schema constraints
+_tool_cfg = _cfg["tool"]
+_TOOL_NAME: str = _tool_cfg["name"]
+_CONFIDENCE_MIN: int = _tool_cfg["confidence_min_to_pass"]
+
+# Prompts
+_SYSTEM_PROMPT: str = _cfg["system_prompt"].strip()
+_USER_PROMPT_TEMPLATE: str = _cfg["user_prompt_template"].strip()
+
+# Outreach config
+_outreach = _cfg["outreach"]
+    for ex in _offer["revenue_examples"]
+]
+
+# Email tool — built from config so constraints stay in one place
 _EMAIL_TOOL = {
-    "name": "write_email",
-    "description": "Write a personalized affiliate outreach email for this YouTube creator.",
+    "name": _TOOL_NAME,
+    "description": _tool_cfg["description"],
     "input_schema": {
         "type": "object",
         "properties": {
             "subject_line": {
                 "type": "string",
-                "description": "Personalized subject line referencing the creator's specific content or niche",
+                "description": (
+                    f"Personalized subject line. Max {_tool_cfg['subject_max_words']} words / "
+                    f"{_tool_cfg['subject_max_chars']} characters. "
+                    "Must pass the 'from a peer' test. No banned words."
+                ),
+            },
+            "subject_strategy_used": {
+                "type": "string",
+                "enum": _tool_cfg["subject_strategies"],
+                "description": "Which subject line strategy was applied.",
             },
             "email_body": {
                 "type": "string",
-                "description": "Full email body including the closing signature block",
+                "description": (
+                    "Full email body following the exact 4-section structure. "
+                    f"{_tool_cfg['body_min_words']}–{_tool_cfg['body_max_words']} words. "
+                    "Includes closing signature block."
+                ),
+            },
+            "language": {
+                "type": "string",
+                "enum": _tool_cfg["languages"],
+                "description": "'es' only for channels whose description AND video titles are primarily in Spanish. 'en' for everything else.",
+            },
+            "referenced_video_title": {
+                "type": "string",
+                "description": "The single most relevant video title cited in the hook sentence.",
             },
             "personalization_hooks": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Specific video titles or content pieces from the channel referenced in the email",
+                "description": "All specific video titles or content pieces referenced anywhere in the email.",
+            },
+            "confidence_score": {
+                "type": "integer",
+                "description": (
+                    f"Self-assessed quality score 1–10. Score against: "
+                    f"(1) subject is under {_tool_cfg['subject_max_chars']} chars, "
+                    "(2) hook names a specific video, "
+                    "(3) pain point matches their actual niche, "
+                    "(4) no banned phrases present, "
+                    "(5) CTA is low-pressure. "
+                    f"If score <{_CONFIDENCE_MIN}, regenerate with a different approach before returning."
+                ),
             },
         },
-        "required": ["subject_line", "email_body", "personalization_hooks"],
+        "required": [
+            "subject_line",
+            "subject_strategy_used",
+            "email_body",
+            "language",
+            "referenced_video_title",
+            "personalization_hooks",
+            "confidence_score",
+        ],
     },
 }
-
-_SYSTEM_PROMPT = """\
-You are Carlos Leon, a marketing data expert at Windsor.ai, writing outreach emails to \
-YouTube creators to invite them into Windsor.ai's affiliate program.
-
-Windsor.ai facts:
-- Connects 325+ ad platforms (Google Ads, Meta, TikTok, LinkedIn, Shopify, HubSpot, etc.) \
-to any BI tool, spreadsheet, or data warehouse — no code needed
-- Works with Looker Studio, Google Sheets, Claude, BigQuery, Snowflake, and more
-- Live Claude connector: https://claude.com/connectors/windsor-ai
-- Affiliate offer: 15% discount code for their audience + 30% lifetime revenue share per referral
-- Revenue share examples to include: 10 clients at $100/mo = $300/mo passive | \
-50 clients = $1,500/mo | 100 clients = $3,000/mo
-
-Every email must be written entirely in the language detected from the channel's description \
-and video titles. If the channel is primarily in Spanish, write the entire email in Spanish, \
-including the closing lines.\
-"""
-
-_USER_PROMPT_TEMPLATE = """\
-Write a personalized outreach email for this YouTube creator using the write_email tool.
-
-Creator:
-- Channel: {channel_title} ({subscribers:,} subscribers, {engagement_rate:.2f}% engagement)
-- Channel description: {description}
-- Why they fit Windsor.ai: {llm_rationale}
-- Recent video titles: {video_titles}
-- Niche tags: {niche_tags}
-
-For the greeting, follow this priority order:
-1. Extract the creator's first name from the channel description if mentioned \
-(e.g. "My name is X", "I'm X", "Hi, I'm X", "Soy X", "Me llamo X"). Use that first name.
-2. If the channel appears to be a company, agency, or brand — indicated by words like Agency, \
-Media, Studio, Group, LLC, Inc., Corp, Co., Consulting, Marketing, Digital, Solutions, or the \
-name reads as a brand rather than a person — use a neutral team greeting:
-   - English: "Hi [Company Name] team,"
-   - Spanish: "Hola, equipo de [Company Name],"
-3. Otherwise, if the name reads like a personal handle or individual creator, use it directly:
-   - English: "Hey [channel name],"
-   - Spanish: "Hola [channel name],"
-
-The email MUST follow this exact structure — use the same section headings and order:
-
----
-
-Use the language-appropriate greeting:
-- If writing in Spanish: "Hola [nombre],"
-- If writing in English or any other language: "Hey [name],"
-
-[1 sentences — Hook + credibility] Open by acknowledging what makes their content stand out \
-and what their track record or audience focus reveals about the problems they solve. \
-Reference something specific from the channel (a video title, their niche, their results).
-
-[2–3 sentences — Intro + solution] "I'm Carlos Leon from Windsor.ai." Describe what Windsor.ai \
-does for their specific audience — which platforms it connects, which destinations it syncs to \
-(Looker Studio, Google Sheets, Claude, etc.), and what insight that unlocks. \
-Include the Claude connector link: https://claude.com/connectors/windsor-ai
-
-We are offering you:
-• 15% discount code for their audience.
-• 30% lifetime revenue share for every subscriber they refer.
-
-That means:
-• If they refer just 10 clients at $100/month = $300/month passive income
-• If they refer 50 clients = $1,500/month
-• If they refer 100 clients = $3,000/month
-
-Why I think this is a strong fit:
-
-[2–3 sentences — Pain + Windsor.ai value] Describe the specific data bottleneck their audience \
-hits next (e.g. tracking ROAS across platforms, understanding which products are profitable, \
-making budget decisions on real numbers). 
-
-And with one video mention, the revenue can keep compounding because the rev share is lifetime.
-
-Worth exploring?
-
-Best,
-Carlos Leon
-Looker Studio & Marketing Data Expert
-Windsor.ai
-
----
-
-Tone: direct and genuine — one professional writing to another.
-No flattery openers ("amazing channel", "love your work"). No "I hope this finds you well". \
-No "sponsorship".
-
-Language: detect the channel's language from the description and video titles. \
-If the channel is primarily in Spanish, write the entire email in Spanish, including the \
-subject line — use "30% de comisión vitalicia para tu audiencia". \
-In all other cases — including Portuguese, French, or any other language — write in English \
-with subject line "30% lifetime rev share for your audience".\
-"""
 
 
 def build_email_requests(
     influencers: list[dict],
     enriched_map: dict[str, dict],
     model: str | None = None,
-    max_tokens: int = 1024,
+    max_tokens: int | None = None,
 ) -> list[dict]:
     """
     Build a list of MessageBatchRequestParam dicts for email generation.
@@ -154,12 +141,13 @@ def build_email_requests(
         influencers: list of scored influencer dicts (must have llm_rationale, niche_tags)
         enriched_map: channel_id -> enriched channel dict (for recent_video_titles)
         model: Claude model ID (defaults to settings.claude_model)
-        max_tokens: max tokens per response
+        max_tokens: max tokens per response (defaults to email_config.yaml batch.max_tokens)
 
     Returns:
         list of request dicts ready for client.messages.batches.create(requests=...)
     """
     model = model or settings.claude_model
+    max_tokens = max_tokens if max_tokens is not None else _DEFAULT_MAX_TOKENS
     requests = []
     for influencer in influencers:
         cid = influencer["channel_id"]
@@ -168,7 +156,7 @@ def build_email_requests(
         niche_tags = influencer.get("niche_tags", [])
         llm_rationale = influencer.get(
             "llm_rationale",
-            influencer.get("relevance_rationale", "strong fit for Windsor.ai affiliate program"),
+            influencer.get("relevance_rationale", "strong fit for the affiliate program"),
         )
 
         description = ch.get("description", "") or ""
@@ -176,10 +164,16 @@ def build_email_requests(
             channel_title=influencer["channel_title"],
             subscribers=influencer.get("subscriber_count", 0),
             engagement_rate=influencer.get("engagement_rate", 0.0),
-            description=description[:600],
+            description=description[:_DESC_MAX_CHARS],
             llm_rationale=llm_rationale,
-            video_titles=", ".join(ch.get("recent_video_titles", [])[:8]),
+            video_titles=", ".join(ch.get("recent_video_titles", [])[:_MAX_VIDEO_TITLES]),
             niche_tags=", ".join(niche_tags) if niche_tags else "marketing analytics",
+            purpose=_outreach["purpose"],
+            cta_en=_outreach["cta_en"],
+            cta_es=_outreach["cta_es"],
+            body_min_words=_tool_cfg["body_min_words"],
+            body_max_words=_tool_cfg["body_max_words"],
+            confidence_min_to_pass=_CONFIDENCE_MIN,
         )
 
         requests.append({
@@ -189,7 +183,7 @@ def build_email_requests(
                 "max_tokens": max_tokens,
                 "system": _SYSTEM_PROMPT,
                 "tools": [_EMAIL_TOOL],
-                "tool_choice": {"type": "tool", "name": "write_email"},
+                "tool_choice": {"type": "tool", "name": _TOOL_NAME},
                 "messages": [{"role": "user", "content": user_msg}],
             },
         })
@@ -266,18 +260,27 @@ def fetch_email_results(batch_id: str) -> dict[str, dict]:
                 None,
             )
             if tool_block and hasattr(tool_block, "input"):
+                inp = tool_block.input
                 results[cid] = {
-                    "subject_line": tool_block.input.get("subject_line", ""),
-                    "email_body": tool_block.input.get("email_body", ""),
-                    "personalization_hooks": tool_block.input.get("personalization_hooks", []),
+                    "subject_line": inp.get("subject_line", ""),
+                    "subject_strategy_used": inp.get("subject_strategy_used", ""),
+                    "email_body": inp.get("email_body", ""),
+                    "language": inp.get("language", "en"),
+                    "referenced_video_title": inp.get("referenced_video_title", ""),
+                    "personalization_hooks": inp.get("personalization_hooks", []),
+                    "confidence_score": inp.get("confidence_score", 0),
                     "success": True,
                 }
             else:
                 log.error("fetch_email_results — no tool_use block for %s", cid)
                 results[cid] = {
                     "subject_line": "",
+                    "subject_strategy_used": "",
                     "email_body": "",
+                    "language": "en",
+                    "referenced_video_title": "",
                     "personalization_hooks": [],
+                    "confidence_score": 0,
                     "success": False,
                 }
         else:
@@ -288,8 +291,12 @@ def fetch_email_results(batch_id: str) -> dict[str, dict]:
             log.error("fetch_email_results — batch item %s failed: %s", cid, error_msg)
             results[cid] = {
                 "subject_line": "",
+                "subject_strategy_used": "",
                 "email_body": "",
+                "language": "en",
+                "referenced_video_title": "",
                 "personalization_hooks": [],
+                "confidence_score": 0,
                 "success": False,
             }
 

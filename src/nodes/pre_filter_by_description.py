@@ -1,6 +1,6 @@
 from src.logger import get_logger
 from src.state import GraphState
-from src.nodes.filter_influencers import WINDSOR_AI_NICHES
+from src.nodes.filter_influencers import NICHE_KEYWORDS
 from src.scoring.keyword_scorer import NEGATIVE_KEYWORDS
 
 log = get_logger(__name__)
@@ -12,7 +12,7 @@ def pre_filter_by_description(state: GraphState) -> dict:
 
     Two-pass filter on the channel description:
       1. Reject if any negative keyword is present (crypto, gaming, lifestyle…)
-      2. Reject if no Windsor.ai niche keyword is found
+      2. Reject if no niche keyword is found
 
     Fail-open: channels with very short/missing descriptions (<30 chars) skip
     the niche check (kept), but negative keywords still disqualify them.
@@ -34,7 +34,7 @@ def pre_filter_by_description(state: GraphState) -> dict:
             continue
 
         # Fail-open on short descriptions; otherwise require a niche keyword
-        if len(desc) >= 30 and not any(niche in text for niche in WINDSOR_AI_NICHES):
+        if len(desc) >= 30 and not any(niche in text for niche in NICHE_KEYWORDS):
             dropped_no_niche += 1
             continue
 

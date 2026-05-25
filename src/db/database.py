@@ -538,6 +538,14 @@ class Database:
             result.append(d)
         return result
 
+    def count_unenriched_channels(self) -> int:
+        """Return number of channels with no enrichment data (subscriber_count = 0)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM channels WHERE subscriber_count = 0 OR subscriber_count IS NULL"
+            ).fetchone()
+        return row[0] if row else 0
+
     def get_searched_keywords(self) -> set[str]:
         """Return all keywords that have been successfully searched."""
         with self._connect() as conn:

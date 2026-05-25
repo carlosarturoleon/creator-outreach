@@ -54,7 +54,7 @@ def test_relevance_score_capped_at_30():
             "google analytics ga4 attribution conversion tracking marketing analytics "
             "looker studio data studio google tag manager gtm facebook pixel meta pixel "
             "ecommerce analytics shopify analytics multi-channel tracking marketing attribution "
-            "analytics dashboard marketing data supermetrics windsor ppc paid advertising "
+            "analytics dashboard marketing data supermetrics ppc paid advertising "
             "google ads facebook ads meta ads performance marketing roi tracking roi measurement "
             "marketing measurement data-driven marketing digital analytics tiktok ads linkedin ads "
             "ad performance shopify bigquery looker tableau power bi ads manager marketing dashboard "

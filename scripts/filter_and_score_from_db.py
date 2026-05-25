@@ -1,5 +1,5 @@
 """
-filter_and_score_from_db.py — Apply Windsor.ai niche filter to all enriched
+filter_and_score_from_db.py — Apply niche filter to all enriched
 channels in the DB, then run deterministic scoring on those that pass.
 
 Useful after a large pipeline run where many channels were enriched but not
@@ -19,7 +19,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.db.database import Database
-from src.nodes.filter_influencers import WINDSOR_AI_NICHES
+from src.nodes.filter_influencers import NICHE_KEYWORDS
 from src.nodes.score_influencers import (
     _audience_size_score,
     _engagement_score,
@@ -69,7 +69,7 @@ def apply_niche_filter(channels: list[dict]) -> list[dict]:
             " ".join(ch.get("recent_video_titles", [])),
             ch.get("channel_title", ""),
         ]).lower()
-        if any(niche in text_blob for niche in WINDSOR_AI_NICHES):
+        if any(niche in text_blob for niche in NICHE_KEYWORDS):
             passed.append(ch)
     return passed
 
@@ -88,7 +88,7 @@ def main() -> None:
     print(f"  {len(channels)} channels meet subscriber/engagement floor")
 
     filtered = apply_niche_filter(channels)
-    print(f"  {len(filtered)} passed Windsor.ai niche filter ({len(channels) - len(filtered)} dropped)\n")
+    print(f"  {len(filtered)} passed niche filter ({len(channels) - len(filtered)} dropped)\n")
 
     if not filtered:
         print("No channels passed the filter. Try broadening --min-subscribers or --min-engagement.")

@@ -113,7 +113,7 @@ def main() -> None:
             body = result["email_body"].replace(" —", ",").replace("—", ",")
             hooks = result["personalization_hooks"]
         else:
-            subject = "Windsor.ai Affiliate Opportunity"
+            subject = "Affiliate Opportunity"
             body = "[Email generation failed - please retry]"
             hooks = []
 

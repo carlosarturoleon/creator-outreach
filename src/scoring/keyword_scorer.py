@@ -1,107 +1,52 @@
 """
-Deterministic keyword-based relevance scoring for Windsor.ai influencer candidates.
+Deterministic keyword-based relevance scoring for influencer candidates for your affiliate program.
 
 Replaces LLM scoring with a rule-based system using weighted keyword matching
 against the channel description, title, keywords, and recent video titles.
 
 Scoring tiers (description-focused):
-  HIGH_VALUE   = 3 pts each  — direct Windsor.ai use-case signals
+  HIGH_VALUE   = 3 pts each  — direct product use-case signals
   MEDIUM_VALUE = 2 pts each  — paid advertising / performance marketing
   LOW_VALUE    = 1 pt each   — general digital marketing
 
 Composite score (0-30, scaled to match the old LLM relevance range):
-  (keyword_pts × 0.6) + (upload_freq_pts × 0.2) + (view_ratio_pts × 0.2)
-  capped at 30.
+  keyword_pts normalized to 0-30, capped at max_scaled_pts.
 
 Negative keywords cause immediate disqualification (score = 0).
+
+All keyword lists, thresholds, and tag mappings are loaded from pipeline_config.yaml.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 # ---------------------------------------------------------------------------
-# Keyword dictionaries
+# Load pipeline_config.yaml once at module import time
 # ---------------------------------------------------------------------------
+_CONFIG_PATH = Path(__file__).parent.parent.parent / "pipeline_config.yaml"
 
-HIGH_VALUE: list[str] = [
-    "google analytics", "ga4",
-    "attribution",
-    "conversion tracking",
-    "marketing analytics",
-    "looker studio", "data studio",
-    "google tag manager", "gtm",
-    "facebook pixel", "meta pixel",
-    "ecommerce analytics",
-    "shopify analytics",
-    "multi-channel tracking",
-    "marketing attribution",
-    "analytics dashboard",
-    "marketing data",
-    "hubspot",                      # CRM + reporting tool — prime Windsor.ai affiliate audience
-    "supermetrics",                 # competitor — they already buy tools like Windsor
-    "windsor",
-]
+with open(_CONFIG_PATH) as _f:
+    _cfg = yaml.safe_load(_f)
 
-MEDIUM_VALUE: list[str] = [
-    "ppc", "paid advertising",
-    "media buying", "paid ads", "paid media",
-    "google ads",
-    "facebook ads", "meta ads",
-    "tiktok ads",
-    "linkedin ads",
-    "pinterest ads",
-    "snapchat ads",
-    "amazon ads",
-    "performance marketing",
-    "roi tracking", "roi measurement",
-    "marketing measurement",
-    "data-driven marketing",
-    "digital analytics",
-    "ad performance",
-    "shopify",
-    "salesforce",
-    "bigquery",
-    "snowflake",
-    "amazon redshift",
-    "looker",
-    "tableau",
-    "power bi",
-    "google sheets",
-    "microsoft excel",
-    "ads manager",
-    "marketing dashboard",
-    "affiliate marketing",
-    "martech",
-]
+_kw_cfg = _cfg["keyword_scoring"]
 
-LOW_VALUE: list[str] = [
-    "digital marketing",
-    "marketing tips",
-    "business growth",
-    "social media marketing",
-    "seo",
-    "content marketing",
-    "email marketing",
-    "lead generation",
-    "growth hacking",
-    "saas",
-    "analytics",
-    "data",
-    "ecommerce",
-    "dropshipping",
-]
+MAX_RAW_PTS: int = _kw_cfg["max_raw_pts"]
+MAX_SCALED_PTS: float = float(_kw_cfg["max_scaled_pts"])
+MAX_NICHE_TAGS: int = _kw_cfg["max_niche_tags"]
 
-NEGATIVE_KEYWORDS: list[str] = [
-    "crypto", "nft", "web3", "blockchain", "defi",
-    "lifestyle", "vlog", "daily vlog", "travel vlog",
-    "gaming", "gameplay", "let's play",
-    "entertainment", "music", "comedy",
-    "fitness", "workout", "gym",
-    "cooking", "recipe", "food",
-    "fashion", "beauty", "makeup",
-    "kids", "family", "parenting",
-    "passive income secrets", "get rich",
-    "reposting clips",
-]
+_FIT = _kw_cfg["fit_thresholds"]
+FIT_STRONG: int = _FIT["strong"]
+FIT_GOOD: int = _FIT["good"]
+FIT_MODERATE: int = _FIT["moderate"]
+
+HIGH_VALUE: list[str] = _kw_cfg["high_value_keywords"]
+MEDIUM_VALUE: list[str] = _kw_cfg["medium_value_keywords"]
+LOW_VALUE: list[str] = _kw_cfg["low_value_keywords"]
+NEGATIVE_KEYWORDS: list[str] = _kw_cfg["negative_keywords"]
+_NICHE_TAG_MAP: dict[str, str] = _kw_cfg["niche_tag_map"]
 
 
 # ---------------------------------------------------------------------------
@@ -160,64 +105,15 @@ def _view_ratio_score(avg_views: float, subscribers: int) -> float:
 
 
 def _infer_niche_tags(matched_keywords: list[str]) -> list[str]:
-    """Map matched keywords to human-readable niche tags (deduped, max 5)."""
-    tag_map = {
-        "google analytics": "Google Analytics",
-        "ga4": "GA4",
-        "attribution": "Marketing Attribution",
-        "conversion tracking": "Conversion Tracking",
-        "marketing analytics": "Marketing Analytics",
-        "looker studio": "Looker Studio",
-        "data studio": "Looker Studio",
-        "google tag manager": "Google Tag Manager",
-        "gtm": "Google Tag Manager",
-        "facebook pixel": "Meta Pixel",
-        "meta pixel": "Meta Pixel",
-        "ecommerce analytics": "eCommerce Analytics",
-        "shopify analytics": "Shopify Analytics",
-        "shopify": "Shopify",
-        "hubspot": "HubSpot",
-        "salesforce": "Salesforce",
-        "multi-channel tracking": "Multi-Channel Attribution",
-        "google ads": "Google Ads",
-        "facebook ads": "Facebook Ads",
-        "meta ads": "Meta Ads",
-        "tiktok ads": "TikTok Ads",
-        "linkedin ads": "LinkedIn Ads",
-        "pinterest ads": "Pinterest Ads",
-        "snapchat ads": "Snapchat Ads",
-        "amazon ads": "Amazon Ads",
-        "performance marketing": "Performance Marketing",
-        "media buying": "Media Buying",
-        "paid ads": "Paid Ads",
-        "paid media": "Paid Media",
-        "data-driven marketing": "Data-Driven Marketing",
-        "digital analytics": "Digital Analytics",
-        "ppc": "PPC",
-        "saas": "SaaS",
-        "ecommerce": "eCommerce",
-        "affiliate marketing": "Affiliate Marketing",
-        "martech": "MarTech",
-        "bigquery": "BigQuery",
-        "snowflake": "Snowflake",
-        "amazon redshift": "Amazon Redshift",
-        "google sheets": "Google Sheets",
-        "microsoft excel": "Microsoft Excel",
-        "power bi": "Power BI",
-        "tableau": "Tableau",
-        "seo": "SEO",
-        "digital marketing": "Digital Marketing",
-        "supermetrics": "Marketing Tools",
-        "windsor": "Windsor.ai",
-    }
+    """Map matched keywords to human-readable niche tags (deduped, max MAX_NICHE_TAGS)."""
     seen: set[str] = set()
     tags: list[str] = []
     for kw in matched_keywords:
-        tag = tag_map.get(kw)
+        tag = _NICHE_TAG_MAP.get(kw)
         if tag and tag not in seen:
             seen.add(tag)
             tags.append(tag)
-        if len(tags) >= 5:
+        if len(tags) >= MAX_NICHE_TAGS:
             break
     return tags
 
@@ -255,30 +151,27 @@ def score_channel_relevance(ch: dict) -> dict:
     if keyword_pts == 0:
         return {
             "relevance_score": 0.0,
-            "relevance_rationale": "No Windsor.ai-relevant keywords found in channel content.",
+            "relevance_rationale": "No relevant keywords found in channel content.",
             "niche_tags": [],
             "keyword_score_raw": 0,
         }
 
-    # keyword_pts max ≈ 50 (all high-value); scale directly to 0-30
-    # Upload frequency and view ratio are now top-level scoring components in
-    # score_influencers.py — removed here to avoid double-counting.
-    relevance_score = round(min(30.0, keyword_pts * (30.0 / 50.0)), 2)
+    relevance_score = round(min(MAX_SCALED_PTS, keyword_pts * (MAX_SCALED_PTS / MAX_RAW_PTS)), 2)
 
     niche_tags = _infer_niche_tags(matched)
 
     # Human-readable rationale
-    if keyword_pts >= 6:
+    if keyword_pts >= FIT_STRONG:
         fit = "strong fit"
-    elif keyword_pts >= 4:
+    elif keyword_pts >= FIT_GOOD:
         fit = "good fit"
-    elif keyword_pts >= 2:
+    elif keyword_pts >= FIT_MODERATE:
         fit = "moderate fit"
     else:
         fit = "weak fit"
 
     top_kws = ", ".join(matched[:4]) if matched else "general marketing"
-    rationale = f"{fit.capitalize()} for Windsor.ai — matched keywords: {top_kws}."
+    rationale = f"{fit.capitalize()} for affiliate program — matched keywords: {top_kws}."
 
     return {
         "relevance_score": relevance_score,

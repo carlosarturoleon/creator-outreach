@@ -9,6 +9,13 @@ from src.db.database import Database
 def db(tmp_path):
     d = Database(db_path=str(tmp_path / "test.db"))
     d.init_db()
+    d.migrate_add_contact_email()
+    d.migrate_scoring_v2()
+    d.migrate_llm_scoring()
+    d.migrate_add_no_email()
+    d.migrate_add_contact_emails()
+    d.migrate_add_daily_quota()
+    d.migrate_add_quota_to_runs()
     return d
 
 
@@ -42,7 +49,7 @@ def _score_data(channel_id="UC_test_001"):
             "audience_size": 15.0,
             "relevance": 10.0,
         },
-        "relevance_rationale": "Good fit for Windsor.ai.",
+        "relevance_rationale": "Good fit for affiliate program.",
         "niche_tags": ["Google Analytics", "Marketing Analytics"],
     }
 

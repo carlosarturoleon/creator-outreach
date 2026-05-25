@@ -7,6 +7,10 @@ enriches each influencer dict with llm_score and llm_rationale, drops
 weak-fit channels (llm_score < LLM_SCORE_FLOOR), and re-sorts by
 llm_score (primary) then composite_score (secondary).
 """
+from pathlib import Path
+
+import yaml
+
 from src.config import settings
 from src.db.database import Database
 from src.logger import get_logger
@@ -20,7 +24,11 @@ from src.tools.batch_scorer_client import (
 
 log = get_logger(__name__)
 
-LLM_SCORE_FLOOR = 4   # Channels scoring below this are dropped from the pipeline
+_CONFIG_PATH = Path(__file__).parent.parent.parent / "pipeline_config.yaml"
+with open(_CONFIG_PATH) as _f:
+    _cfg = yaml.safe_load(_f)
+
+LLM_SCORE_FLOOR: int = _cfg["llm_scoring"]["score_floor"]
 
 
 def llm_score_influencers(state: GraphState) -> dict:

@@ -30,7 +30,7 @@ def generate_emails(state: GraphState) -> dict:
     results to SQLite. Uses llm_rationale (from the LLM scorer) and niche_tags
     for richer, more personalized email content.
 
-    Sender persona: Carlos Leon, Looker Studio & Marketing Data Expert, Windsor.ai.
+    Sender persona configured in email_config.yaml (sender section).
     """
     db = Database()
     errors: list[str] = []
@@ -71,7 +71,7 @@ def generate_emails(state: GraphState) -> dict:
         log.info("generate_emails — no influencers have a contact email, skipping batch")
         return {"outreach_emails": [], "error_log": [], "current_phase": "email_generation_complete"}
 
-    # Skip influencers who are already in the Windsor.ai affiliate program
+    # Skip influencers who are already in the affiliate program
     promoter_emails = db.get_promoter_emails()
     if promoter_emails:
         before = len(influencers)
@@ -142,7 +142,7 @@ def generate_emails(state: GraphState) -> dict:
             hooks = result["personalization_hooks"]
         else:
             errors.append(f"[generate_emails] Batch failed for {cid}")
-            subject = "Windsor.ai Affiliate Opportunity"
+            subject = "Affiliate Opportunity"
             body = "[Email generation failed - please retry]"
             hooks = []
 

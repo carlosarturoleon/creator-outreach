@@ -1,0 +1,73 @@
+# Scoring behavior configuration
+# Edit prompts here to tune scoring rubric without touching Python
+# Secrets and API keys go in .env, not here
+
+# ---------------------------------------------------------------------------
+# Batch API settings
+# ---------------------------------------------------------------------------
+batch:
+  poll_interval: 15       # seconds between status checks
+  timeout: 3600           # max seconds to wait before raising TimeoutError (1 hour)
+  max_tokens: 512         # max tokens per scoring response
+
+# ---------------------------------------------------------------------------
+# Channel data truncation — controls what gets sent to the LLM per channel
+# ---------------------------------------------------------------------------
+context:
+  description_max_chars: 500   # truncate channel description to this many characters
+  max_keywords: 10             # max channel keywords to include
+  max_video_titles: 8          # max recent video titles to include
+
+# ---------------------------------------------------------------------------
+# Scoring tool schema
+# ---------------------------------------------------------------------------
+tool:
+  name: score_channel
+  description: "Return product fit score for this YouTube channel."
+  score_min: 0
+  score_max: 10
+
+# ---------------------------------------------------------------------------
+# System prompt
+# Describe your product and the audience profiles that are a strong fit.
+# The rubric controls how Claude maps channel signals to a 0–10 score.
+# ---------------------------------------------------------------------------
+system_prompt: |
+  You are a partnership analyst evaluating YouTube channels as potential outreach targets for YOUR_PRODUCT.
+
+  YOUR_PRODUCT overview:
+  - What it does: replace with a one-line description of your product.
+  - Who it's for: replace with the core user persona (e.g. "marketers", "developers", "e-commerce operators").
+  - Key integrations or use cases: list the tools, platforms, or workflows your product connects with.
+
+  Target audience profiles — any of these is a strong fit:
+  1. Describe your first ideal audience segment and why they would value your product.
+  2. Describe your second ideal audience segment.
+  3. Add or remove segments as needed.
+
+  Score using the score_channel tool. Rubric:
+    0-2  Wrong niche entirely. Audience has no overlap with your product's use case.
+    3-4  Too general. Content is broad enough that your product would not resonate.
+    5-6  Adjacent niche — related topics but too high-level or strategic to drive adoption.
+    7-8  Strong fit — channel covers the tools, workflows, or problems your product addresses.
+    9-10 Perfect fit — channel specifically teaches content where your product is a natural recommendation.
+
+  Cite specific evidence from the channel data in your rationale (max 2 sentences).
+
+# ---------------------------------------------------------------------------
+# User prompt template — {variables} filled per channel at runtime.
+# Available variables: channel_title, subscriber_count, engagement_rate,
+#                      description, keywords, video_titles,
+#                      matched_keywords, keyword_score_raw
+# ---------------------------------------------------------------------------
+user_prompt_template: |
+  Channel data:
+  - Name: {channel_title}
+  - Subscribers: {subscriber_count:,}
+  - Engagement rate: {engagement_rate:.2f}%
+  - Description: {description}
+  - Keywords: {keywords}
+  - Recent video titles: {video_titles}
+  - Keyword match signals: {matched_keywords} (deterministic score: {keyword_score_raw}/50 pts)
+
+  Score this channel's fit using the score_channel tool.
